@@ -5,6 +5,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 grupos = ["reserva", "teste", "inativos"]
 model = ["feller", "basculante"]
@@ -25,6 +26,19 @@ def fechar_emergencias(driver):
                 time.sleep(0.5)
             except:
                 pass
+
+def clicar_salvar_ultimo_visivel(driver, timeout=8):
+    wait_local = WebDriverWait(driver, timeout)
+    wait_local.until(EC.visibility_of_element_located((By.ID, "name")))
+
+    spans = driver.find_elements(By.XPATH, "//*[@id='app']//span[normalize-space()='Salvar']")
+    spans = [s for s in spans if s.is_displayed()]
+
+    span_salvar = spans[-1]
+    clicavel = span_salvar.find_element(By.XPATH, "./ancestor::button[1] | ./ancestor::a[1]")
+
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", clicavel)
+    driver.execute_script("arguments[0].click();", clicavel)
 
 while True:
     usuario = input('Digite seu usuario: ') + "@aiko.digital"
@@ -52,7 +66,7 @@ while True:
     if confirma == "S":
         break
 
-driver = webdriver.Chrome()
+driver = webdriver.Edge()
 driver.maximize_window()
 driver.get(f"https://{empresa}.br.trackit.host/")
 
@@ -142,8 +156,6 @@ for k in range(inicio, fim):
     pausa(0.5, 0.8)
 
     #Salva
-    wait.until(EC.element_to_be_clickable(
-        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[18]/div[2]/a/span'))
-    ).click()
+    clicar_salvar_ultimo_visivel(driver, timeout=8)
     wait.until(EC.invisibility_of_element_located((By.ID, "name")))
     pausa(0.5, 1)
