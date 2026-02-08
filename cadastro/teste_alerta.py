@@ -7,9 +7,18 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
+import tkinter as tk
+from tkinter import messagebox
 
 grupos = ["reserva", "teste", "inativos"]
 model = ["feller", "basculante"]
+
+def aviso_ok(titulo: str, mensagem: str):
+    root = tk.Tk()
+    root.withdraw()              
+    root.attributes("-topmost", True) 
+    messagebox.showinfo(titulo, mensagem) 
+    root.destroy()
 
 def pausa(min_s=0.5, max_s=3.5):
     time.sleep(random.uniform(min_s, max_s))
@@ -192,4 +201,8 @@ for k in range(inicio, fim):
     wait.until(EC.invisibility_of_element_located((By.ID, "name")))
     pausa(0.5, 1)
 
-print(f"Todos os {limite} bordos foram criados com sucesso!")
+total_criados = limite - parou 
+aviso_ok(
+    "Automação finalizada",
+    f"Foram criados {total_criados} bordos com sucesso.\nEmpresa: {empresa}\nTicket: {ticket}"
+)
