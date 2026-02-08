@@ -5,6 +5,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 grupos = ["reserva", "teste", "inativos"]
@@ -27,6 +28,15 @@ def fechar_emergencias(driver):
             except:
                 pass
 
+
+def click_forcado(driver, el):
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        ActionChains(driver).move_to_element(el).pause(0.1).click(el).perform()
+        return
+    except Exception:
+        pass
+
 def clicar_salvar_ultimo_visivel(driver, timeout=8):
     wait_local = WebDriverWait(driver, timeout)
     wait_local.until(EC.visibility_of_element_located((By.ID, "name")))
@@ -40,15 +50,36 @@ def clicar_salvar_ultimo_visivel(driver, timeout=8):
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", clicavel)
     driver.execute_script("arguments[0].click();", clicavel)
 
+def confirmar_sim_se_existir(driver, timeout=3):
+    wait_local = WebDriverWait(driver, timeout)
+
+    seletores = [
+        (By.CSS_SELECTOR, "button[data-test-ak-confirm-dialog-btn-confirm]"),
+        (By.XPATH, "//button[normalize-space()='Sim']"),
+        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[18]/div[2]/div/div[2]/button[2]'),
+        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[19]/div[2]/div/div[2]/button[2]'),
+    ]
+
+    for by, sel in seletores:
+        try:
+            sim = wait_local.until(EC.element_to_be_clickable((by, sel)))
+            click_forcado(driver, sim)
+            time.sleep(0.3)
+            return True
+        except TimeoutException:
+            pass
+
+    return False
+
 while True:
-    usuario = input('Digite seu usuario: ') + "@aiko.digital"
+    usuario = input('Digite seu usuario (Sem a parte do @): ') + "@aiko.digital"
     senha = input('Digite sua senha: ')
     empresa = input('Digite qual empresa: ').upper()
-    equipamento = input('Digite qual o modelo de equipamento: ').upper()
-    ticket = int(input("Digite o ticket: "))
-    zendesk = input("Ticket Zendesk (N se não tiver): ").strip()
+    equipamento = input('Digite qual o modelo de equipamento (comodato, servico de campo, etc): ').upper()
+    ticket = int(input("Digite o ticket (Somente o numero): "))
+    zendesk = input("Ticket Zendesk (N se não tiver, somente o numero): ").strip()
     parou = int(input("Se parou em algum bordo, digite o número (0 se não parou): "))
-    limite = int(input("Digite quantos bordos: "))
+    limite = int(input("Digite quantos bordos no total: "))
 
     print("\n--- CONFIRA OS DADOS ---")
     print(f"Usuário: {usuario}")
@@ -133,7 +164,7 @@ for k in range(inicio, fim):
     ))
     for opcao2 in opcoes2:
         texto2 = opcao2.text.strip().lower()
-        if "equipamento" in texto2:
+        if "equipamentos" in texto2:
             opcao2.click()
             break
     pausa(0.5, 0.8)
@@ -157,5 +188,8 @@ for k in range(inicio, fim):
 
     #Salva
     clicar_salvar_ultimo_visivel(driver, timeout=8)
+    confirmar_sim_se_existir(driver, timeout=3)
     wait.until(EC.invisibility_of_element_located((By.ID, "name")))
     pausa(0.5, 1)
+
+print(f"Todos os {limite} bordos foram criados com sucesso!")
