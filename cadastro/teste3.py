@@ -57,6 +57,7 @@ def confirmar_sim_se_existir(driver, timeout=3):
         (By.CSS_SELECTOR, "button[data-test-ak-confirm-dialog-btn-confirm]"),
         (By.XPATH, "//button[normalize-space()='Sim']"),
         (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[18]/div[2]/div/div[2]/button[2]'),
+        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[19]/div[2]/div/div[2]/button[2]'),
     ]
 
     for by, sel in seletores:
@@ -71,14 +72,14 @@ def confirmar_sim_se_existir(driver, timeout=3):
     return False
 
 while True:
-    usuario = input('Digite seu usuario: ') + "@aiko.digital"
+    usuario = input('Digite seu usuario (Sem a parte do @): ') + "@aiko.digital"
     senha = input('Digite sua senha: ')
     empresa = input('Digite qual empresa: ').upper()
-    equipamento = input('Digite qual o modelo de equipamento: ').upper()
-    ticket = int(input("Digite o ticket: "))
-    zendesk = input("Ticket Zendesk (N se não tiver): ").strip()
+    equipamento = input('Digite qual o modelo de equipamento (comodato, servico de campo, etc): ').upper()
+    ticket = int(input("Digite o ticket (Somente o numero): "))
+    zendesk = input("Ticket Zendesk (N se não tiver, somente o numero): ").strip()
     parou = int(input("Se parou em algum bordo, digite o número (0 se não parou): "))
-    limite = int(input("Digite quantos bordos: "))
+    limite = int(input("Digite quantos bordos no total: "))
 
     print("\n--- CONFIRA OS DADOS ---")
     print(f"Usuário: {usuario}")
@@ -163,7 +164,7 @@ for k in range(inicio, fim):
     ))
     for opcao2 in opcoes2:
         texto2 = opcao2.text.strip().lower()
-        if "equipamento" in texto2:
+        if "equipamentos" in texto2:
             opcao2.click()
             break
     pausa(0.5, 0.8)
