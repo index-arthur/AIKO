@@ -8,7 +8,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
-grupos = ["reserva", "teste", "inativos"]
+grupos = ["reservas", "teste", "inativos"]
 model = ["feller", "basculante"]
 
 def pausa(min_s=0.5, max_s=3.5):
@@ -104,6 +104,8 @@ driver.get(f"https://{empresa}.br.trackit.host/")
 # LOGIN
 driver.find_element("id", "UserName").send_keys(usuario)
 driver.find_element("id", "Password").send_keys(senha, Keys.ENTER)
+
+# driver.find_element(By.XPATH, '//*[@id="social-azuread-aiko"]/span').click()
 
 wait = WebDriverWait(driver, 15)
 
