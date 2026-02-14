@@ -28,6 +28,22 @@ def fechar_emergencias(driver):
             except:
                 pass
 
+def login(driver, usuario, senha):
+    wait_curto = WebDriverWait(driver, 3)
+    wait_normal = WebDriverWait(driver, 15)
+
+    try:
+        botao_entrada = wait_curto.until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                "//*[@id='social-azuread-aiko']/span",
+            ))
+        )
+        driver.execute_script("arguments[0].click();", botao_entrada)
+        return
+    except TimeoutException:
+        wait_normal.until(EC.visibility_of_element_located((By.ID, "UserName"))).send_keys(usuario)
+        driver.find_element(By.ID, "Password").send_keys(senha, Keys.ENTER)
 
 def click_forcado(driver, el):
     try:
@@ -101,11 +117,7 @@ driver = webdriver.Edge()
 driver.maximize_window()
 driver.get(f"https://{empresa}.br.trackit.host/")
 
-# LOGIN
-driver.find_element("id", "UserName").send_keys(usuario)
-driver.find_element("id", "Password").send_keys(senha, Keys.ENTER)
-
-# driver.find_element(By.XPATH, '//*[@id="social-azuread-aiko"]/span').click()
+login(driver, usuario, senha)
 
 wait = WebDriverWait(driver, 15)
 
