@@ -117,8 +117,8 @@ driver = webdriver.Edge()
 driver.maximize_window()
 driver.get(f"https://{empresa}.br.trackit.host/")
 
+#LOGIN
 login(driver, usuario, senha)
-
 wait = WebDriverWait(driver, 15)
 
 fechar_emergencias(driver)

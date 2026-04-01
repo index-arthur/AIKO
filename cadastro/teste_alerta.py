@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 grupos = ["reserva", "teste", "inativos"]
-model = ["feller", "basculante"]
+model = ["feller", "basculante", "Forwarder"]
 
 def aviso_ok(titulo: str, mensagem: str):
     root = tk.Tk()
@@ -150,16 +150,19 @@ for k in range(inicio, fim):
     bordo = f"{empresa} | {equipamento} | HWS-{ticket}{zendesk_txt} | {numero}"
 
     #Click no botao azul
+    fechar_emergencias(driver)
     wait.until(EC.presence_of_element_located((By.ID, "app")))
     wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div[2]/a/span'))).click()
     pausa(1, 1.3)
 
     #Escreve o nome do bordo
+    fechar_emergencias(driver)
     wait.until(EC.element_to_be_clickable((By.ID, "name"))).send_keys(bordo)
     pausa(1, 1.3)
 
     #Seleciona o Modelo
+    fechar_emergencias(driver)
     wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//*[@id="equipmentModel"]/div[1]')
     )).click()
@@ -177,6 +180,7 @@ for k in range(inicio, fim):
     pausa(0.5, 0.8)
 
     #Seleciona o Perfil
+    fechar_emergencias(driver)
     wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//*[@id="networkProfiles"]/div[1]')
     )).click()
@@ -194,6 +198,7 @@ for k in range(inicio, fim):
     pausa(0.5, 0.8)
 
     #Seleciona Grupo
+    fechar_emergencias(driver)
     wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//*[@id="equipmentGroup"]/div[1]')
     )).click()
@@ -211,6 +216,7 @@ for k in range(inicio, fim):
     pausa(0.5, 0.8)
 
     #Salva
+    fechar_emergencias(driver)
     clicar_salvar_ultimo_visivel(driver, timeout=8)
     confirmar_sim_se_existir(driver, timeout=3)
     wait.until(EC.invisibility_of_element_located((By.ID, "name")))
