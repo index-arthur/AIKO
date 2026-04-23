@@ -40,7 +40,7 @@ RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 #   True  → força o banner aparecer; o "Atualizar" simula o download
 #            (não substitui o .exe de verdade)
 #   False → comportamento real (consulta o GitHub, baixa e substitui)
-MODO_TESTE_UPDATE = True
+MODO_TESTE_UPDATE = False
 
 GRUPOS_DEFAULT = ["BAR-VN-000", "reserva", "teste", "inativos"]
 MODEL_DEFAULT  = ["AXOR 3344", "feller", "basculante", "forwarder"]
