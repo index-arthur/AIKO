@@ -22,6 +22,11 @@ VERSION_URL = (
 )
 RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 
+# ⚠️ MODO DE TESTE DO UPDATER (deixar False em produção!)
+#   True  → força o banner/popup aparecer (versão remota simulada = "9.9")
+#   False → comportamento real (consulta o GitHub)
+MODO_TESTE_UPDATE = True
+
 GRUPOS_DEFAULT = ["BAR-VN-000", "reserva", "teste", "inativos"]
 MODEL_DEFAULT  = ["AXOR 3344", "feller", "basculante", "forwarder"]
 PERFIL_DEFAULT = ["equipamentos"]
@@ -44,6 +49,9 @@ TUTORIAL_TXT = (
 # ==================== UPDATE CHECK ====================
 def checar_atualizacao(timeout=3):
     """Retorna (tem_update: bool, versao_remota: str|None)."""
+    if MODO_TESTE_UPDATE:
+        # Simula uma versão remota "nova" para testar o banner/popup
+        return (True, "9.9")
     try:
         req = urllib.request.Request(
             VERSION_URL, headers={"User-Agent": "AikoCadastroHUD"}
