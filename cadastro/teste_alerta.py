@@ -152,6 +152,8 @@ def confirmar_sim_se_existir(driver, timeout=3):
     seletores = [
         (By.CSS_SELECTOR, "button[data-test-ak-confirm-dialog-btn-confirm]"),
         (By.XPATH, "//button[normalize-space()='Sim']"),
+        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[18]/div[2]/div/div[2]/button[2]'),
+        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[19]/div[2]/div/div[2]/button[2]'),
     ]
     for by, sel in seletores:
         try:
