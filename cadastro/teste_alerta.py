@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.0"
+VERSION = "4.2"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -126,10 +126,11 @@ def baixar_nova_versao(exe_url, progresso_cb, timeout=60):
     return destino
 
 def aplicar_atualizacao(exe_novo_path):
-    """Substitui o .exe atual pelo novo via script .bat e reinicia.
+    """Agenda a substituição do .exe atual via script .bat.
 
-    Só funciona quando rodando como executável (PyInstaller). Em modo
-    dev, dispara RuntimeError.
+    IMPORTANTE: esta função NÃO encerra o programa. Quem chama é
+    responsável por chamar os._exit(0) no thread principal para que
+    o processo realmente feche e libere o .exe para substituição.
     """
     if not getattr(sys, "frozen", False):
         raise RuntimeError(
@@ -141,13 +142,16 @@ def aplicar_atualizacao(exe_novo_path):
     temp_dir = tempfile.gettempdir()
     bat_path = os.path.join(temp_dir, f"_aiko_update_{os.getpid()}.bat")
 
-    # Espera 2s (para o HUD fechar) → move novo por cima do atual →
-    # reinicia → se autodeleta.
     bat = (
         f'@echo off\r\n'
         f'chcp 65001 > nul\r\n'
-        f'timeout /t 2 /nobreak > nul\r\n'
-        f'move /y "{exe_novo_path}" "{exe_atual}" > nul\r\n'
+        f'timeout /t 3 /nobreak > nul\r\n'
+        f':retry\r\n'
+        f'move /y "{exe_novo_path}" "{exe_atual}" > nul 2>&1\r\n'
+        f'if errorlevel 1 (\r\n'
+        f'  timeout /t 1 /nobreak > nul\r\n'
+        f'  goto retry\r\n'
+        f')\r\n'
         f'start "" "{exe_atual}"\r\n'
         f'del "%~f0"\r\n'
     )
@@ -158,7 +162,6 @@ def aplicar_atualizacao(exe_novo_path):
         ["cmd", "/c", bat_path],
         creationflags=0x00000008,  # DETACHED_PROCESS
     )
-    sys.exit(0)
 
 # ==================== SELENIUM HELPERS ====================
 def pausa(min_s=0.5, max_s=3.5):
@@ -578,6 +581,7 @@ class CadastroHUD(tk.Tk):
 
                 # Produção: aplica e encerra (o .bat reinicia)
                 aplicar_atualizacao(caminho)
+                self.after(0, lambda: os._exit(0))
             except Exception as e:
                 erro = str(e)
                 self.after(0, lambda: (
