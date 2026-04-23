@@ -1,18 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-Automação de Cadastro de Bordo - Aiko / Trackit
-Versão com HUD (tkinter) + checagem automática de atualização no GitHub.
-"""
-
 import time
 import random
 import threading
 import webbrowser
 import urllib.request
-
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -20,7 +12,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
-
 
 # ==================== CONFIG ====================
 VERSION = "3.5"
@@ -50,7 +41,6 @@ TUTORIAL_TXT = (
     "• Perfil         → Perfil de rede (padrão: equipamentos)\n"
 )
 
-
 # ==================== UPDATE CHECK ====================
 def checar_atualizacao(timeout=3):
     """Retorna (tem_update: bool, versao_remota: str|None)."""
@@ -64,11 +54,9 @@ def checar_atualizacao(timeout=3):
     except Exception:
         return (False, None)
 
-
 # ==================== SELENIUM HELPERS ====================
 def pausa(min_s=0.5, max_s=3.5):
     time.sleep(random.uniform(min_s, max_s))
-
 
 def clicar_dropdown(driver, xpaths_botao, xpaths_opcoes, condicao):
     wait_curto = WebDriverWait(driver, 3)
@@ -98,7 +86,6 @@ def clicar_dropdown(driver, xpaths_botao, xpaths_opcoes, condicao):
             return True
     return False
 
-
 def login(driver, usuario, senha):
     wait_curto = WebDriverWait(driver, 3)
     wait_normal = WebDriverWait(driver, 15)
@@ -125,14 +112,12 @@ def fechar_emergencias(driver):
             except Exception:
                 pass
 
-
 def click_forcado(driver, el):
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
         ActionChains(driver).move_to_element(el).pause(0.1).click(el).perform()
     except Exception:
         pass
-
 
 def clicar_salvar_ultimo_visivel(driver, timeout=8):
     wait_local = WebDriverWait(driver, timeout)
@@ -145,7 +130,6 @@ def clicar_salvar_ultimo_visivel(driver, timeout=8):
         By.XPATH, "./ancestor::button[1] | ./ancestor::a[1]")
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", clicavel)
     driver.execute_script("arguments[0].click();", clicavel)
-
 
 def confirmar_sim_se_existir(driver, timeout=3):
     wait_local = WebDriverWait(driver, timeout)
@@ -165,14 +149,12 @@ def confirmar_sim_se_existir(driver, timeout=3):
             continue
     return False
 
-
 def esperar_loading(driver, timeout=15):
     try:
         WebDriverWait(driver, timeout).until(
             EC.invisibility_of_element_located((By.ID, "waiting-update")))
     except TimeoutException:
         pass
-
 
 # ==================== AUTOMAÇÃO ====================
 def executar_automacao(dados, log):
@@ -262,7 +244,6 @@ def executar_automacao(dados, log):
         pausa(0.5, 1)
 
     log("Finalizado.")
-
 
 # ==================== HUD ====================
 class CadastroHUD(tk.Tk):
@@ -494,7 +475,6 @@ class CadastroHUD(tk.Tk):
             grupos=lista("grupos"), modelos=lista("modelos"),
             perfil=lista("perfil"),
         )
-
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
