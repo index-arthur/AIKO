@@ -1,4 +1,3 @@
-
 import os
 import sys
 import json
@@ -167,7 +166,7 @@ def pausa(min_s=0.5, max_s=3.5):
 
 def clicar_dropdown(driver, xpaths_botao, xpaths_opcoes, condicao):
     wait_curto = WebDriverWait(driver, 3)
-    wait_normal = WebDriverWait(driver, 15)
+    wait_normal = WebDriverWait(driver, 25)
 
     for xpath in xpaths_botao:
         try:
@@ -195,7 +194,7 @@ def clicar_dropdown(driver, xpaths_botao, xpaths_opcoes, condicao):
 
 def login(driver, usuario, senha):
     wait_curto = WebDriverWait(driver, 3)
-    wait_normal = WebDriverWait(driver, 15)
+    wait_normal = WebDriverWait(driver, 25)
     try:
         botao = wait_curto.until(EC.element_to_be_clickable(
             (By.XPATH, "//*[@id='social-azuread-aiko']/span")))
@@ -255,7 +254,7 @@ def confirmar_sim_se_existir(driver, timeout=3):
             continue
     return False
 
-def esperar_loading(driver, timeout=15):
+def esperar_loading(driver, timeout=25):
     try:
         WebDriverWait(driver, timeout).until(
             EC.invisibility_of_element_located((By.ID, "waiting-update")))
