@@ -1,6 +1,12 @@
+
+import os
+import sys
+import json
 import time
 import random
+import tempfile
 import threading
+import subprocess
 import webbrowser
 import urllib.request
 import tkinter as tk
@@ -17,14 +23,15 @@ from selenium.common.exceptions import TimeoutException
 VERSION = "3.5"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
-VERSION_URL = (
-    f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/cadastro/VERSION"
+GITHUB_API_LATEST = (
+    f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 )
 RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 
 # ⚠️ MODO DE TESTE DO UPDATER (deixar False em produção!)
-#   True  → força o banner/popup aparecer (versão remota simulada = "9.9")
-#   False → comportamento real (consulta o GitHub)
+#   True  → força o banner aparecer; o "Atualizar" simula o download
+#            (não substitui o .exe de verdade)
+#   False → comportamento real (consulta o GitHub, baixa e substitui)
 MODO_TESTE_UPDATE = True
 
 GRUPOS_DEFAULT = ["BAR-VN-000", "reserva", "teste", "inativos"]
@@ -47,20 +54,114 @@ TUTORIAL_TXT = (
 )
 
 # ==================== UPDATE CHECK ====================
-def checar_atualizacao(timeout=3):
-    """Retorna (tem_update: bool, versao_remota: str|None)."""
+def checar_atualizacao(timeout=5):
+    """Consulta a Releases API do GitHub.
+
+    Retorna um dict com:
+      tem_update     → bool
+      versao_remota  → str  (tag sem 'v')
+      exe_url        → str  (URL de download do .exe, ou None)
+      release_url    → str  (URL html da release)
+    """
+    vazio = {"tem_update": False, "versao_remota": None,
+             "exe_url": None, "release_url": RELEASES_URL}
+
     if MODO_TESTE_UPDATE:
-        # Simula uma versão remota "nova" para testar o banner/popup
-        return (True, "9.9")
+        return {"tem_update": True, "versao_remota": "9.9",
+                "exe_url": None, "release_url": RELEASES_URL}
+
     try:
         req = urllib.request.Request(
-            VERSION_URL, headers={"User-Agent": "AikoCadastroHUD"}
+            GITHUB_API_LATEST,
+            headers={
+                "User-Agent": "AikoCadastroHUD",
+                "Accept": "application/vnd.github+json",
+            },
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            remota = resp.read().decode("utf-8").strip()
-        return (remota != VERSION, remota)
+            data = json.loads(resp.read().decode("utf-8"))
+
+        tag = (data.get("tag_name") or "").lstrip("v").strip()
+        exe_asset = next(
+            (a for a in data.get("assets", [])
+             if a.get("name", "").lower().endswith(".exe")),
+            None,
+        )
+        return {
+            "tem_update": bool(tag) and tag != VERSION,
+            "versao_remota": tag or None,
+            "exe_url": exe_asset["browser_download_url"] if exe_asset else None,
+            "release_url": data.get("html_url") or RELEASES_URL,
+        }
     except Exception:
-        return (False, None)
+        return vazio
+
+
+def baixar_nova_versao(exe_url, progresso_cb, timeout=60):
+    """Baixa o .exe para um arquivo temporário. Retorna o caminho local."""
+    if MODO_TESTE_UPDATE:
+        # Simula download com progresso falso
+        for i in range(0, 101, 4):
+            progresso_cb(i)
+            time.sleep(0.08)
+        return None
+
+    temp_dir = tempfile.gettempdir()
+    destino = os.path.join(temp_dir, f"Cadastro_update_{os.getpid()}.exe")
+
+    req = urllib.request.Request(
+        exe_url, headers={"User-Agent": "AikoCadastroHUD"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        baixado = 0
+        with open(destino, "wb") as f:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                baixado += len(chunk)
+                if total:
+                    progresso_cb(min(99, baixado / total * 100))
+    progresso_cb(100)
+    return destino
+
+
+def aplicar_atualizacao(exe_novo_path):
+    """Substitui o .exe atual pelo novo via script .bat e reinicia.
+
+    Só funciona quando rodando como executável (PyInstaller). Em modo
+    dev, dispara RuntimeError.
+    """
+    if not getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "Auto-update só funciona no .exe compilado.\n"
+            "Em modo dev (python teste_alerta.py), baixe manualmente."
+        )
+
+    exe_atual = sys.executable
+    temp_dir = tempfile.gettempdir()
+    bat_path = os.path.join(temp_dir, f"_aiko_update_{os.getpid()}.bat")
+
+    # Espera 2s (para o HUD fechar) → move novo por cima do atual →
+    # reinicia → se autodeleta.
+    bat = (
+        f'@echo off\r\n'
+        f'chcp 65001 > nul\r\n'
+        f'timeout /t 2 /nobreak > nul\r\n'
+        f'move /y "{exe_novo_path}" "{exe_atual}" > nul\r\n'
+        f'start "" "{exe_atual}"\r\n'
+        f'del "%~f0"\r\n'
+    )
+    with open(bat_path, "w", encoding="utf-8") as f:
+        f.write(bat)
+
+    subprocess.Popen(
+        ["cmd", "/c", bat_path],
+        creationflags=0x00000008,  # DETACHED_PROCESS
+    )
+    sys.exit(0)
 
 # ==================== SELENIUM HELPERS ====================
 def pausa(min_s=0.5, max_s=3.5):
@@ -372,24 +473,123 @@ class CadastroHUD(tk.Tk):
     # ----- Update -----
     def _verificar_update_async(self):
         def worker():
-            tem, remota = checar_atualizacao()
-            if tem and remota:
-                self.after(0, lambda: self._mostrar_update(remota))
+            info = checar_atualizacao()
+            if info.get("tem_update"):
+                self.after(0, lambda: self._mostrar_update(info))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _mostrar_update(self, remota):
+    def _mostrar_update(self, info):
+        remota = info["versao_remota"]
         self.update_lbl.configure(
             text=f"  Nova versão disponível: {remota}  (você tem {VERSION})"
         )
+        # Troca o link padrão por um que abre o diálogo de atualização
+        self.update_link.configure(text="Atualizar agora →")
+        self.update_link.unbind("<Button-1>")
+        self.update_link.bind(
+            "<Button-1>", lambda e: self._dialogo_confirmar_update(info)
+        )
         # Coloca o banner no topo da janela
         self.update_bar.pack(fill="x", before=self.winfo_children()[1])
-        if messagebox.askyesno(
-            "Atualização disponível",
-            f"Há uma nova versão ({remota}).\n"
-            f"Você está usando {VERSION}.\n\n"
-            "Abrir a página de releases no navegador?",
-        ):
-            webbrowser.open(RELEASES_URL)
+        # Abre direto o diálogo de confirmação
+        self._dialogo_confirmar_update(info)
+
+    def _dialogo_confirmar_update(self, info):
+        """Janela perguntando se quer atualizar agora ou depois."""
+        remota = info["versao_remota"]
+        top = tk.Toplevel(self)
+        top.title("Atualização disponível")
+        top.geometry("420x210")
+        top.transient(self)
+        top.grab_set()
+        top.resizable(False, False)
+
+        ttk.Label(top, text=f"Nova versão: {remota}",
+                  font=("Segoe UI", 13, "bold")).pack(pady=(18, 2))
+        ttk.Label(top, text=f"Você está usando a {VERSION}.").pack()
+        ttk.Label(top, text="Atualizar agora vai baixar a nova versão\n"
+                            "e reiniciar o programa automaticamente.",
+                  justify="center").pack(pady=(12, 0))
+
+        btns = ttk.Frame(top)
+        btns.pack(pady=14)
+
+        def on_atualizar():
+            top.destroy()
+            self._dialogo_baixando_update(info)
+
+        def on_depois():
+            top.destroy()
+
+        ttk.Button(btns, text="Atualizar agora", style="Primary.TButton",
+                   command=on_atualizar).pack(side="left", padx=6)
+        ttk.Button(btns, text="Depois", command=on_depois)\
+            .pack(side="left", padx=6)
+
+    def _dialogo_baixando_update(self, info):
+        """Janela com barra de progresso durante download/aplicação."""
+        exe_url = info.get("exe_url")
+        if not exe_url and not MODO_TESTE_UPDATE:
+            messagebox.showerror(
+                "Sem arquivo disponível",
+                "A release mais recente não tem um .exe anexado.\n"
+                "Abra a página de releases e baixe manualmente."
+            )
+            webbrowser.open(info.get("release_url") or RELEASES_URL)
+            return
+
+        top = tk.Toplevel(self)
+        top.title("Atualizando...")
+        top.geometry("420x170")
+        top.transient(self)
+        top.grab_set()
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", lambda: None)  # trava X durante download
+
+        ttk.Label(top, text="Baixando a nova versão...",
+                  font=("Segoe UI", 10, "bold")).pack(pady=(18, 6))
+
+        pbar = ttk.Progressbar(top, length=360, maximum=100, mode="determinate")
+        pbar.pack(pady=6, padx=20, fill="x")
+
+        status = tk.StringVar(value="Conectando...")
+        ttk.Label(top, textvariable=status,
+                  style="Sub.TLabel").pack(pady=(2, 0))
+
+        def progresso(p):
+            self.after(0, lambda p=p: (pbar.configure(value=p),
+                                       status.set(f"{p:.0f}%")))
+
+        def worker():
+            try:
+                caminho = baixar_nova_versao(exe_url, progresso)
+                self.after(0, lambda: status.set(
+                    "Download concluído. Reiniciando..."))
+                time.sleep(0.6)
+
+                if MODO_TESTE_UPDATE:
+                    # Em modo teste, não mexe em nada: só avisa.
+                    self.after(0, lambda: (
+                        top.destroy(),
+                        messagebox.showinfo(
+                            "Simulação concluída",
+                            "MODO_TESTE_UPDATE = True\n\n"
+                            "Em produção, o .exe seria substituído e o "
+                            "programa reiniciaria automaticamente."
+                        )
+                    ))
+                    return
+
+                # Produção: aplica e encerra (o .bat reinicia)
+                aplicar_atualizacao(caminho)
+            except Exception as e:
+                erro = str(e)
+                self.after(0, lambda: (
+                    top.destroy(),
+                    messagebox.showerror("Erro na atualização", erro)
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ----- Tutorial -----
     def _abrir_tutorial(self):
