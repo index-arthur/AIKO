@@ -96,7 +96,6 @@ def checar_atualizacao(timeout=5):
     except Exception:
         return vazio
 
-
 def baixar_nova_versao(exe_url, progresso_cb, timeout=60):
     """Baixa o .exe para um arquivo temporário. Retorna o caminho local."""
     if MODO_TESTE_UPDATE:
@@ -126,7 +125,6 @@ def baixar_nova_versao(exe_url, progresso_cb, timeout=60):
                     progresso_cb(min(99, baixado / total * 100))
     progresso_cb(100)
     return destino
-
 
 def aplicar_atualizacao(exe_novo_path):
     """Substitui o .exe atual pelo novo via script .bat e reinicia.
@@ -206,7 +204,6 @@ def login(driver, usuario, senha):
         wait_normal.until(EC.visibility_of_element_located((By.ID, "UserName")))\
             .send_keys(usuario)
         driver.find_element(By.ID, "Password").send_keys(senha, Keys.ENTER)
-
 
 def fechar_emergencias(driver):
     while True:
