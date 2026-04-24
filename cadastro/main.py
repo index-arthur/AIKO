@@ -9,6 +9,7 @@ import subprocess
 import webbrowser
 import urllib.request
 import tkinter as tk
+from PyInstaller.utils.hooks import collect_submodules
 from tkinter import ttk, messagebox, scrolledtext
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -19,7 +20,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.2"
+VERSION = "4.4"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
