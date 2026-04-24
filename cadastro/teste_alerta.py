@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.4"
+VERSION = "4.5"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -152,6 +152,11 @@ def aplicar_atualizacao(exe_novo_path):
         f'  timeout /t 1 /nobreak > nul\r\n'
         f'  goto retry\r\n'
         f')\r\n'
+        # Espera 4s depois do move para o Windows Defender terminar de
+        # escanear o novo arquivo. Sem essa pausa, o 'start' logo abaixo
+        # dispara um erro "Failed to load Python DLL" porque o arquivo
+        # ainda está lockado pelo AV enquanto o PyInstaller tenta extrair.
+        f'timeout /t 4 /nobreak > nul\r\n'
         f'start "" "{exe_atual}"\r\n'
         f'del "%~f0"\r\n'
     )
