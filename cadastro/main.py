@@ -9,7 +9,6 @@ import subprocess
 import webbrowser
 import urllib.request
 import tkinter as tk
-from PyInstaller.utils.hooks import collect_submodules
 from tkinter import ttk, messagebox, scrolledtext
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
@@ -20,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.4"
+VERSION = "5.0"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -54,6 +53,16 @@ TUTORIAL_TXT = (
 )
 
 # ==================== UPDATE CHECK ====================
+def _comparar_versoes(remota, local):
+    """Retorna True se remota > local (assumindo formato 'x.y' ou 'x.y.z')."""
+    try:
+        r = tuple(int(p) for p in remota.split("."))
+        l = tuple(int(p) for p in local.split("."))
+        return r > l
+    except (ValueError, AttributeError):
+        return False
+
+
 def checar_atualizacao(timeout=5):
     """Consulta a Releases API do GitHub.
 
@@ -88,7 +97,7 @@ def checar_atualizacao(timeout=5):
             None,
         )
         return {
-            "tem_update": bool(tag) and tag != VERSION,
+            "tem_update": _comparar_versoes(tag, VERSION),
             "versao_remota": tag or None,
             "exe_url": exe_asset["browser_download_url"] if exe_asset else None,
             "release_url": data.get("html_url") or RELEASES_URL,
@@ -153,6 +162,11 @@ def aplicar_atualizacao(exe_novo_path):
         f'  timeout /t 1 /nobreak > nul\r\n'
         f'  goto retry\r\n'
         f')\r\n'
+        # Espera 4s depois do move para o Windows Defender terminar de
+        # escanear o novo arquivo. Sem essa pausa, o 'start' logo abaixo
+        # dispara um erro "Failed to load Python DLL" porque o arquivo
+        # ainda está lockado pelo AV enquanto o PyInstaller tenta extrair.
+        f'timeout /t 4 /nobreak > nul\r\n'
         f'start "" "{exe_atual}"\r\n'
         f'del "%~f0"\r\n'
     )
@@ -366,25 +380,166 @@ class CadastroHUD(tk.Tk):
         except Exception:
             pass
 
-        self._estilo()
+        self._aplicar_tema(self._tema_atual)
         self._montar_layout()
         self.after(200, self._verificar_update_async)
 
+    def _aplicar_tema(self, nome):
+        """Aplica um tema (escuro/claro), reconfigurando as cores."""
+        self._tema_atual = nome
+        for k, v in self.TEMAS[nome].items():
+            setattr(self, k, v)
+        self._estilo()
+        # ttk pega as novas cores via style, mas widgets tk (log, etc.)
+        # precisam ser reconfigurados manualmente.
+        if hasattr(self, "log"):
+            self.log.configure(
+                bg=self.SURFACE, fg=self.TEXT,
+                insertbackground=self.TEXT,
+                selectbackground=self.ACCENT,
+            )
+        if hasattr(self, "_user_suffix"):
+            self._user_suffix.configure(bg=self.SURFACE, fg=self.SUBTLE)
+        if hasattr(self, "btn_tema"):
+            self.btn_tema.configure(
+                text="☀ Claro" if nome == "escuro" else "🌙 Escuro"
+            )
+
+    def _toggle_tema(self):
+        novo = "claro" if self._tema_atual == "escuro" else "escuro"
+        self._aplicar_tema(novo)
+
+    # Paletas de tema
+    TEMAS = {
+        "escuro": {
+            "BG":          "#1e1e1e",
+            "SURFACE":     "#2d2d30",
+            "BORDER":      "#3e3e42",
+            "TEXT":        "#e0e0e0",
+            "SUBTLE":      "#9a9a9a",
+            "ACCENT":      "#0e639c",
+            "ACCENT_2":    "#1177bb",
+            "UPDATE_BG":   "#3a3500",
+            "UPDATE_FG":   "#ffd966",
+            "UPDATE_LINK": "#4ea1ff",
+        },
+        "claro": {
+            "BG":          "#f5f5f5",
+            "SURFACE":     "#ffffff",
+            "BORDER":      "#d0d0d0",
+            "TEXT":        "#1e1e1e",
+            "SUBTLE":      "#666666",
+            "ACCENT":      "#0d6efd",
+            "ACCENT_2":    "#0a58ca",
+            "UPDATE_BG":   "#fff3cd",
+            "UPDATE_FG":   "#664d03",
+            "UPDATE_LINK": "#0d6efd",
+        },
+    }
+    _tema_atual = "escuro"  # tema inicial
+
     def _estilo(self):
+        # Fundo da janela principal
+        self.configure(bg=self.BG)
+
         style = ttk.Style(self)
+        # 'clam' aceita customização de cor melhor que 'vista' no Windows
         try:
-            style.theme_use("vista")
+            style.theme_use("clam")
         except Exception:
             pass
-        style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"))
-        style.configure("Sub.TLabel", font=("Segoe UI", 9), foreground="#555")
-        style.configure("Update.TFrame", background="#FFF3CD")
-        style.configure("Update.TLabel", background="#FFF3CD",
-                        foreground="#664D03", font=("Segoe UI", 9, "bold"))
-        style.configure("UpdateLink.TLabel", background="#FFF3CD",
-                        foreground="#0D6EFD",
+
+        # ---------- Containers ----------
+        style.configure("TFrame", background=self.BG)
+        style.configure("TLabelframe",
+                        background=self.BG, foreground=self.TEXT,
+                        bordercolor=self.BORDER, lightcolor=self.BORDER,
+                        darkcolor=self.BORDER)
+        style.configure("TLabelframe.Label",
+                        background=self.BG, foreground=self.TEXT)
+
+        # ---------- Labels ----------
+        style.configure("TLabel",
+                        background=self.BG, foreground=self.TEXT,
+                        font=("Segoe UI", 9))
+        style.configure("Header.TLabel",
+                        background=self.BG, foreground=self.TEXT,
+                        font=("Segoe UI", 14, "bold"))
+        style.configure("Sub.TLabel",
+                        background=self.BG, foreground=self.SUBTLE,
+                        font=("Segoe UI", 9))
+
+        # ---------- Banner de update ----------
+        style.configure("Update.TFrame", background=self.UPDATE_BG)
+        style.configure("Update.TLabel",
+                        background=self.UPDATE_BG,
+                        foreground=self.UPDATE_FG,
+                        font=("Segoe UI", 9, "bold"))
+        style.configure("UpdateLink.TLabel",
+                        background=self.UPDATE_BG,
+                        foreground=self.UPDATE_LINK,
                         font=("Segoe UI", 9, "underline"))
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
+
+        # ---------- Entry ----------
+        style.configure("TEntry",
+                        fieldbackground=self.SURFACE,
+                        background=self.SURFACE,
+                        foreground=self.TEXT,
+                        insertcolor=self.TEXT,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.BORDER,
+                        darkcolor=self.BORDER)
+        style.map("TEntry",
+                  fieldbackground=[("readonly", self.SURFACE),
+                                   ("disabled", self.BG)],
+                  foreground=[("disabled", self.SUBTLE)])
+
+        # ---------- Buttons ----------
+        style.configure("TButton",
+                        background=self.SURFACE, foreground=self.TEXT,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.SURFACE, darkcolor=self.SURFACE,
+                        focuscolor=self.BORDER,
+                        font=("Segoe UI", 9), padding=(10, 4))
+        style.map("TButton",
+                  background=[("active", self.BORDER),
+                              ("pressed", self.BORDER)],
+                  foreground=[("disabled", self.SUBTLE)])
+
+        style.configure("Primary.TButton",
+                        background=self.ACCENT, foreground="white",
+                        bordercolor=self.ACCENT,
+                        lightcolor=self.ACCENT, darkcolor=self.ACCENT,
+                        font=("Segoe UI", 10, "bold"), padding=(12, 5))
+        style.map("Primary.TButton",
+                  background=[("active", self.ACCENT_2),
+                              ("pressed", self.ACCENT_2)])
+
+        # ---------- Checkbutton ----------
+        style.configure("TCheckbutton",
+                        background=self.BG, foreground=self.TEXT,
+                        indicatorcolor=self.SURFACE,
+                        focuscolor=self.BG,
+                        font=("Segoe UI", 9))
+        style.map("TCheckbutton",
+                  background=[("active", self.BG)],
+                  indicatorcolor=[("selected", self.ACCENT),
+                                  ("!selected", self.SURFACE)])
+
+        # ---------- Progressbar ----------
+        style.configure("TProgressbar",
+                        background=self.ACCENT,
+                        troughcolor=self.SURFACE,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.ACCENT, darkcolor=self.ACCENT)
+
+        # ---------- Scrollbar (do ScrolledText) ----------
+        style.configure("Vertical.TScrollbar",
+                        background=self.SURFACE,
+                        troughcolor=self.BG,
+                        bordercolor=self.BORDER,
+                        arrowcolor=self.TEXT,
+                        lightcolor=self.SURFACE, darkcolor=self.SURFACE)
 
     def _montar_layout(self):
         # Banner de update (inicia vazio, empacotado só se houver update)
@@ -399,10 +554,23 @@ class CadastroHUD(tk.Tk):
         # Cabeçalho
         header = ttk.Frame(self, padding=(16, 14, 16, 4))
         header.pack(fill="x")
-        ttk.Label(header, text="Automação de Cadastro de Bordo",
+        header.columnconfigure(0, weight=1)
+
+        titulo = ttk.Frame(header)
+        titulo.grid(row=0, column=0, sticky="w")
+        ttk.Label(titulo, text="Automação de Cadastro de Bordo",
                   style="Header.TLabel").pack(anchor="w")
-        ttk.Label(header, text=f"Versão {VERSION} — Trackit / Aiko",
+        ttk.Label(titulo, text=f"Versão {VERSION} — Trackit / Aiko",
                   style="Sub.TLabel").pack(anchor="w")
+
+        # Botão toggle de tema (canto direito do header)
+        self.btn_tema = ttk.Button(
+            header,
+            text="☀ Claro" if self._tema_atual == "escuro" else "🌙 Escuro",
+            command=self._toggle_tema,
+            width=10,
+        )
+        self.btn_tema.grid(row=0, column=1, sticky="ne", padx=(8, 0))
 
         # Campos
         body = ttk.Frame(self, padding=(16, 8, 16, 8))
@@ -418,8 +586,48 @@ class CadastroHUD(tk.Tk):
             e.grid(row=r, column=1, sticky="ew", pady=4, padx=(8, 0))
             self.vars[key] = v
 
-        row(0, "Usuário (sem @aiko.digital):", "usuario")
-        row(1, "Senha:", "senha", show="•")
+        # Linha do usuário com sufixo "@aiko.digital" sobreposto à direita
+        ttk.Label(body, text="Usuário:").grid(
+            row=0, column=0, sticky="w", pady=4
+        )
+        usr_var = tk.StringVar()
+        usr_entry = ttk.Entry(body, textvariable=usr_var)
+        usr_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(8, 0))
+        # tk.Label permite setar bg/fg direto (sem precisar de style)
+        self._user_suffix = tk.Label(
+            usr_entry, text="@aiko.digital",
+            bg=self.SURFACE, fg=self.SUBTLE,
+            font=("Segoe UI", 9), bd=0,
+        )
+        self._user_suffix.place(relx=1.0, rely=0.5, anchor="e", x=-6)
+        self.vars["usuario"] = usr_var
+
+        # Linha da senha com botão de olho pra mostrar/esconder
+        ttk.Label(body, text="Senha:").grid(
+            row=1, column=0, sticky="w", pady=4
+        )
+        sen_frame = ttk.Frame(body)
+        sen_frame.grid(row=1, column=1, sticky="ew", pady=4, padx=(8, 0))
+        sen_frame.columnconfigure(0, weight=1)
+
+        sen_var = tk.StringVar()
+        sen_entry = ttk.Entry(sen_frame, textvariable=sen_var, show="•")
+        sen_entry.grid(row=0, column=0, sticky="ew")
+
+        def toggle_olho():
+            if sen_entry.cget("show") == "":
+                sen_entry.configure(show="•")
+                self.btn_olho.configure(text="👁")
+            else:
+                sen_entry.configure(show="")
+                self.btn_olho.configure(text="🙈")
+
+        self.btn_olho = ttk.Button(
+            sen_frame, text="👁", command=toggle_olho, width=3,
+        )
+        self.btn_olho.grid(row=0, column=1, padx=(4, 0))
+        self.vars["senha"] = sen_var
+
         row(2, "Empresa (sigla):", "empresa")
         row(3, "Equipamento:", "equipamento", default="COMODATO")
         row(4, "Ticket (número):", "ticket")
@@ -457,7 +665,13 @@ class CadastroHUD(tk.Tk):
         log_frame.pack(fill="both", expand=True, padx=16, pady=(8, 4))
         self.log = scrolledtext.ScrolledText(log_frame, height=8,
                                              font=("Consolas", 9),
-                                             state="disabled", wrap="word")
+                                             state="disabled", wrap="word",
+                                             bg=self.SURFACE, fg=self.TEXT,
+                                             insertbackground=self.TEXT,
+                                             selectbackground=self.ACCENT,
+                                             selectforeground="white",
+                                             borderwidth=0,
+                                             highlightthickness=0)
         self.log.pack(fill="both", expand=True)
 
         # Botões
@@ -503,6 +717,7 @@ class CadastroHUD(tk.Tk):
         top.transient(self)
         top.grab_set()
         top.resizable(False, False)
+        top.configure(bg=self.BG)
 
         ttk.Label(top, text=f"Nova versão: {remota}",
                   font=("Segoe UI", 13, "bold")).pack(pady=(18, 2))
@@ -545,6 +760,7 @@ class CadastroHUD(tk.Tk):
         top.grab_set()
         top.resizable(False, False)
         top.protocol("WM_DELETE_WINDOW", lambda: None)  # trava X durante download
+        top.configure(bg=self.BG)
 
         ttk.Label(top, text="Baixando a nova versão...",
                   font=("Segoe UI", 10, "bold")).pack(pady=(18, 6))
@@ -598,8 +814,15 @@ class CadastroHUD(tk.Tk):
         top.title("Tutorial")
         top.geometry("520x420")
         top.transient(self)
+        top.configure(bg=self.BG)
         txt = scrolledtext.ScrolledText(top, wrap="word",
-                                        font=("Segoe UI", 10))
+                                        font=("Segoe UI", 10),
+                                        bg=self.SURFACE, fg=self.TEXT,
+                                        insertbackground=self.TEXT,
+                                        selectbackground=self.ACCENT,
+                                        selectforeground="white",
+                                        borderwidth=0,
+                                        highlightthickness=0)
         txt.pack(fill="both", expand=True, padx=10, pady=10)
         txt.insert("1.0", TUTORIAL_TXT)
         txt.configure(state="disabled")
@@ -652,7 +875,11 @@ class CadastroHUD(tk.Tk):
                 raise ValueError(f"Preencha o campo: {label}")
             return val
 
-        usuario = req("usuario", "Usuário") + "@aiko.digital"
+        prefixo_usuario = req("usuario", "Usuário")
+        # Defensivo: se o usuário digitou o @aiko.digital junto, tira aqui
+        if prefixo_usuario.lower().endswith("@aiko.digital"):
+            prefixo_usuario = prefixo_usuario[:-len("@aiko.digital")]
+        usuario = prefixo_usuario + "@aiko.digital"
         senha = req("senha", "Senha")
         empresa = req("empresa", "Empresa").upper()
         equipamento = req("equipamento", "Equipamento").upper()
