@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.8"
+VERSION = "5.0"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -398,6 +398,8 @@ class CadastroHUD(tk.Tk):
                 insertbackground=self.TEXT,
                 selectbackground=self.ACCENT,
             )
+        if hasattr(self, "_user_suffix"):
+            self._user_suffix.configure(bg=self.SURFACE, fg=self.SUBTLE)
         if hasattr(self, "btn_tema"):
             self.btn_tema.configure(
                 text="☀ Claro" if nome == "escuro" else "🌙 Escuro"
@@ -584,8 +586,48 @@ class CadastroHUD(tk.Tk):
             e.grid(row=r, column=1, sticky="ew", pady=4, padx=(8, 0))
             self.vars[key] = v
 
-        row(0, "Usuário (sem @aiko.digital):", "usuario")
-        row(1, "Senha:", "senha", show="•")
+        # Linha do usuário com sufixo "@aiko.digital" sobreposto à direita
+        ttk.Label(body, text="Usuário:").grid(
+            row=0, column=0, sticky="w", pady=4
+        )
+        usr_var = tk.StringVar()
+        usr_entry = ttk.Entry(body, textvariable=usr_var)
+        usr_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(8, 0))
+        # tk.Label permite setar bg/fg direto (sem precisar de style)
+        self._user_suffix = tk.Label(
+            usr_entry, text="@aiko.digital",
+            bg=self.SURFACE, fg=self.SUBTLE,
+            font=("Segoe UI", 9), bd=0,
+        )
+        self._user_suffix.place(relx=1.0, rely=0.5, anchor="e", x=-6)
+        self.vars["usuario"] = usr_var
+
+        # Linha da senha com botão de olho pra mostrar/esconder
+        ttk.Label(body, text="Senha:").grid(
+            row=1, column=0, sticky="w", pady=4
+        )
+        sen_frame = ttk.Frame(body)
+        sen_frame.grid(row=1, column=1, sticky="ew", pady=4, padx=(8, 0))
+        sen_frame.columnconfigure(0, weight=1)
+
+        sen_var = tk.StringVar()
+        sen_entry = ttk.Entry(sen_frame, textvariable=sen_var, show="•")
+        sen_entry.grid(row=0, column=0, sticky="ew")
+
+        def toggle_olho():
+            if sen_entry.cget("show") == "":
+                sen_entry.configure(show="•")
+                self.btn_olho.configure(text="👁")
+            else:
+                sen_entry.configure(show="")
+                self.btn_olho.configure(text="🙈")
+
+        self.btn_olho = ttk.Button(
+            sen_frame, text="👁", command=toggle_olho, width=3,
+        )
+        self.btn_olho.grid(row=0, column=1, padx=(4, 0))
+        self.vars["senha"] = sen_var
+
         row(2, "Empresa (sigla):", "empresa")
         row(3, "Equipamento:", "equipamento", default="COMODATO")
         row(4, "Ticket (número):", "ticket")
@@ -833,7 +875,11 @@ class CadastroHUD(tk.Tk):
                 raise ValueError(f"Preencha o campo: {label}")
             return val
 
-        usuario = req("usuario", "Usuário") + "@aiko.digital"
+        prefixo_usuario = req("usuario", "Usuário")
+        # Defensivo: se o usuário digitou o @aiko.digital junto, tira aqui
+        if prefixo_usuario.lower().endswith("@aiko.digital"):
+            prefixo_usuario = prefixo_usuario[:-len("@aiko.digital")]
+        usuario = prefixo_usuario + "@aiko.digital"
         senha = req("senha", "Senha")
         empresa = req("empresa", "Empresa").upper()
         equipamento = req("equipamento", "Equipamento").upper()
