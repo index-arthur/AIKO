@@ -20,7 +20,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.4"
+VERSION = "4.6"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -153,6 +153,11 @@ def aplicar_atualizacao(exe_novo_path):
         f'  timeout /t 1 /nobreak > nul\r\n'
         f'  goto retry\r\n'
         f')\r\n'
+        # Espera 4s depois do move para o Windows Defender terminar de
+        # escanear o novo arquivo. Sem essa pausa, o 'start' logo abaixo
+        # dispara um erro "Failed to load Python DLL" porque o arquivo
+        # ainda está lockado pelo AV enquanto o PyInstaller tenta extrair.
+        f'timeout /t 4 /nobreak > nul\r\n'
         f'start "" "{exe_atual}"\r\n'
         f'del "%~f0"\r\n'
     )
@@ -370,21 +375,120 @@ class CadastroHUD(tk.Tk):
         self._montar_layout()
         self.after(200, self._verificar_update_async)
 
+    # Paleta do tema escuro
+    BG       = "#1e1e1e"   # fundo principal da janela
+    SURFACE  = "#2d2d30"   # caixas de texto, log, dropdowns
+    BORDER   = "#3e3e42"   # bordas sutis
+    TEXT     = "#e0e0e0"   # texto principal
+    SUBTLE   = "#9a9a9a"   # texto secundário
+    ACCENT   = "#0e639c"   # botão primário
+    ACCENT_2 = "#1177bb"   # hover do primário
+    UPDATE_BG   = "#3a3500"  # banner amarelo discreto
+    UPDATE_FG   = "#ffd966"
+    UPDATE_LINK = "#4ea1ff"
+
     def _estilo(self):
+        # Fundo da janela principal
+        self.configure(bg=self.BG)
+
         style = ttk.Style(self)
+        # 'clam' aceita customização de cor melhor que 'vista' no Windows
         try:
-            style.theme_use("vista")
+            style.theme_use("clam")
         except Exception:
             pass
-        style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"))
-        style.configure("Sub.TLabel", font=("Segoe UI", 9), foreground="#555")
-        style.configure("Update.TFrame", background="#FFF3CD")
-        style.configure("Update.TLabel", background="#FFF3CD",
-                        foreground="#664D03", font=("Segoe UI", 9, "bold"))
-        style.configure("UpdateLink.TLabel", background="#FFF3CD",
-                        foreground="#0D6EFD",
+
+        # ---------- Containers ----------
+        style.configure("TFrame", background=self.BG)
+        style.configure("TLabelframe",
+                        background=self.BG, foreground=self.TEXT,
+                        bordercolor=self.BORDER, lightcolor=self.BORDER,
+                        darkcolor=self.BORDER)
+        style.configure("TLabelframe.Label",
+                        background=self.BG, foreground=self.TEXT)
+
+        # ---------- Labels ----------
+        style.configure("TLabel",
+                        background=self.BG, foreground=self.TEXT,
+                        font=("Segoe UI", 9))
+        style.configure("Header.TLabel",
+                        background=self.BG, foreground=self.TEXT,
+                        font=("Segoe UI", 14, "bold"))
+        style.configure("Sub.TLabel",
+                        background=self.BG, foreground=self.SUBTLE,
+                        font=("Segoe UI", 9))
+
+        # ---------- Banner de update ----------
+        style.configure("Update.TFrame", background=self.UPDATE_BG)
+        style.configure("Update.TLabel",
+                        background=self.UPDATE_BG,
+                        foreground=self.UPDATE_FG,
+                        font=("Segoe UI", 9, "bold"))
+        style.configure("UpdateLink.TLabel",
+                        background=self.UPDATE_BG,
+                        foreground=self.UPDATE_LINK,
                         font=("Segoe UI", 9, "underline"))
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
+
+        # ---------- Entry ----------
+        style.configure("TEntry",
+                        fieldbackground=self.SURFACE,
+                        background=self.SURFACE,
+                        foreground=self.TEXT,
+                        insertcolor=self.TEXT,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.BORDER,
+                        darkcolor=self.BORDER)
+        style.map("TEntry",
+                  fieldbackground=[("readonly", self.SURFACE),
+                                   ("disabled", self.BG)],
+                  foreground=[("disabled", self.SUBTLE)])
+
+        # ---------- Buttons ----------
+        style.configure("TButton",
+                        background=self.SURFACE, foreground=self.TEXT,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.SURFACE, darkcolor=self.SURFACE,
+                        focuscolor=self.BORDER,
+                        font=("Segoe UI", 9), padding=(10, 4))
+        style.map("TButton",
+                  background=[("active", self.BORDER),
+                              ("pressed", self.BORDER)],
+                  foreground=[("disabled", self.SUBTLE)])
+
+        style.configure("Primary.TButton",
+                        background=self.ACCENT, foreground="white",
+                        bordercolor=self.ACCENT,
+                        lightcolor=self.ACCENT, darkcolor=self.ACCENT,
+                        font=("Segoe UI", 10, "bold"), padding=(12, 5))
+        style.map("Primary.TButton",
+                  background=[("active", self.ACCENT_2),
+                              ("pressed", self.ACCENT_2)])
+
+        # ---------- Checkbutton ----------
+        style.configure("TCheckbutton",
+                        background=self.BG, foreground=self.TEXT,
+                        indicatorcolor=self.SURFACE,
+                        focuscolor=self.BG,
+                        font=("Segoe UI", 9))
+        style.map("TCheckbutton",
+                  background=[("active", self.BG)],
+                  indicatorcolor=[("selected", self.ACCENT),
+                                  ("!selected", self.SURFACE)])
+
+        # ---------- Progressbar ----------
+        style.configure("TProgressbar",
+                        background=self.ACCENT,
+                        troughcolor=self.SURFACE,
+                        bordercolor=self.BORDER,
+                        lightcolor=self.ACCENT, darkcolor=self.ACCENT)
+
+        # ---------- Scrollbar (do ScrolledText) ----------
+        style.configure("Vertical.TScrollbar",
+                        background=self.SURFACE,
+                        troughcolor=self.BG,
+                        bordercolor=self.BORDER,
+                        arrowcolor=self.TEXT,
+                        lightcolor=self.SURFACE, darkcolor=self.SURFACE)
 
     def _montar_layout(self):
         # Banner de update (inicia vazio, empacotado só se houver update)
@@ -457,7 +561,13 @@ class CadastroHUD(tk.Tk):
         log_frame.pack(fill="both", expand=True, padx=16, pady=(8, 4))
         self.log = scrolledtext.ScrolledText(log_frame, height=8,
                                              font=("Consolas", 9),
-                                             state="disabled", wrap="word")
+                                             state="disabled", wrap="word",
+                                             bg=self.SURFACE, fg=self.TEXT,
+                                             insertbackground=self.TEXT,
+                                             selectbackground=self.ACCENT,
+                                             selectforeground="white",
+                                             borderwidth=0,
+                                             highlightthickness=0)
         self.log.pack(fill="both", expand=True)
 
         # Botões
@@ -503,6 +613,7 @@ class CadastroHUD(tk.Tk):
         top.transient(self)
         top.grab_set()
         top.resizable(False, False)
+        top.configure(bg=self.BG)
 
         ttk.Label(top, text=f"Nova versão: {remota}",
                   font=("Segoe UI", 13, "bold")).pack(pady=(18, 2))
@@ -545,6 +656,7 @@ class CadastroHUD(tk.Tk):
         top.grab_set()
         top.resizable(False, False)
         top.protocol("WM_DELETE_WINDOW", lambda: None)  # trava X durante download
+        top.configure(bg=self.BG)
 
         ttk.Label(top, text="Baixando a nova versão...",
                   font=("Segoe UI", 10, "bold")).pack(pady=(18, 6))
@@ -598,8 +710,15 @@ class CadastroHUD(tk.Tk):
         top.title("Tutorial")
         top.geometry("520x420")
         top.transient(self)
+        top.configure(bg=self.BG)
         txt = scrolledtext.ScrolledText(top, wrap="word",
-                                        font=("Segoe UI", 10))
+                                        font=("Segoe UI", 10),
+                                        bg=self.SURFACE, fg=self.TEXT,
+                                        insertbackground=self.TEXT,
+                                        selectbackground=self.ACCENT,
+                                        selectforeground="white",
+                                        borderwidth=0,
+                                        highlightthickness=0)
         txt.pack(fill="both", expand=True, padx=10, pady=10)
         txt.insert("1.0", TUTORIAL_TXT)
         txt.configure(state="disabled")
