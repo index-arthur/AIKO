@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.7"
+VERSION = "4.8"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -53,6 +53,16 @@ TUTORIAL_TXT = (
 )
 
 # ==================== UPDATE CHECK ====================
+def _comparar_versoes(remota, local):
+    """Retorna True se remota > local (assumindo formato 'x.y' ou 'x.y.z')."""
+    try:
+        r = tuple(int(p) for p in remota.split("."))
+        l = tuple(int(p) for p in local.split("."))
+        return r > l
+    except (ValueError, AttributeError):
+        return False
+
+
 def checar_atualizacao(timeout=5):
     """Consulta a Releases API do GitHub.
 
@@ -87,7 +97,7 @@ def checar_atualizacao(timeout=5):
             None,
         )
         return {
-            "tem_update": bool(tag) and tag != VERSION,
+            "tem_update": _comparar_versoes(tag, VERSION),
             "versao_remota": tag or None,
             "exe_url": exe_asset["browser_download_url"] if exe_asset else None,
             "release_url": data.get("html_url") or RELEASES_URL,
