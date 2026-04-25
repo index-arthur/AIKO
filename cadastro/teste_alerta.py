@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "4.6"
+VERSION = "4.7"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -370,21 +370,61 @@ class CadastroHUD(tk.Tk):
         except Exception:
             pass
 
-        self._estilo()
+        self._aplicar_tema(self._tema_atual)
         self._montar_layout()
         self.after(200, self._verificar_update_async)
 
-    # Paleta do tema escuro
-    BG       = "#1e1e1e"   # fundo principal da janela
-    SURFACE  = "#2d2d30"   # caixas de texto, log, dropdowns
-    BORDER   = "#3e3e42"   # bordas sutis
-    TEXT     = "#e0e0e0"   # texto principal
-    SUBTLE   = "#9a9a9a"   # texto secundário
-    ACCENT   = "#0e639c"   # botão primário
-    ACCENT_2 = "#1177bb"   # hover do primário
-    UPDATE_BG   = "#3a3500"  # banner amarelo discreto
-    UPDATE_FG   = "#ffd966"
-    UPDATE_LINK = "#4ea1ff"
+    def _aplicar_tema(self, nome):
+        """Aplica um tema (escuro/claro), reconfigurando as cores."""
+        self._tema_atual = nome
+        for k, v in self.TEMAS[nome].items():
+            setattr(self, k, v)
+        self._estilo()
+        # ttk pega as novas cores via style, mas widgets tk (log, etc.)
+        # precisam ser reconfigurados manualmente.
+        if hasattr(self, "log"):
+            self.log.configure(
+                bg=self.SURFACE, fg=self.TEXT,
+                insertbackground=self.TEXT,
+                selectbackground=self.ACCENT,
+            )
+        if hasattr(self, "btn_tema"):
+            self.btn_tema.configure(
+                text="☀ Claro" if nome == "escuro" else "🌙 Escuro"
+            )
+
+    def _toggle_tema(self):
+        novo = "claro" if self._tema_atual == "escuro" else "escuro"
+        self._aplicar_tema(novo)
+
+    # Paletas de tema
+    TEMAS = {
+        "escuro": {
+            "BG":          "#1e1e1e",
+            "SURFACE":     "#2d2d30",
+            "BORDER":      "#3e3e42",
+            "TEXT":        "#e0e0e0",
+            "SUBTLE":      "#9a9a9a",
+            "ACCENT":      "#0e639c",
+            "ACCENT_2":    "#1177bb",
+            "UPDATE_BG":   "#3a3500",
+            "UPDATE_FG":   "#ffd966",
+            "UPDATE_LINK": "#4ea1ff",
+        },
+        "claro": {
+            "BG":          "#f5f5f5",
+            "SURFACE":     "#ffffff",
+            "BORDER":      "#d0d0d0",
+            "TEXT":        "#1e1e1e",
+            "SUBTLE":      "#666666",
+            "ACCENT":      "#0d6efd",
+            "ACCENT_2":    "#0a58ca",
+            "UPDATE_BG":   "#fff3cd",
+            "UPDATE_FG":   "#664d03",
+            "UPDATE_LINK": "#0d6efd",
+        },
+    }
+    _tema_atual = "escuro"  # tema inicial
 
     def _estilo(self):
         # Fundo da janela principal
@@ -502,10 +542,23 @@ class CadastroHUD(tk.Tk):
         # Cabeçalho
         header = ttk.Frame(self, padding=(16, 14, 16, 4))
         header.pack(fill="x")
-        ttk.Label(header, text="Automação de Cadastro de Bordo",
+        header.columnconfigure(0, weight=1)
+
+        titulo = ttk.Frame(header)
+        titulo.grid(row=0, column=0, sticky="w")
+        ttk.Label(titulo, text="Automação de Cadastro de Bordo",
                   style="Header.TLabel").pack(anchor="w")
-        ttk.Label(header, text=f"Versão {VERSION} — Trackit / Aiko",
+        ttk.Label(titulo, text=f"Versão {VERSION} — Trackit / Aiko",
                   style="Sub.TLabel").pack(anchor="w")
+
+        # Botão toggle de tema (canto direito do header)
+        self.btn_tema = ttk.Button(
+            header,
+            text="☀ Claro" if self._tema_atual == "escuro" else "🌙 Escuro",
+            command=self._toggle_tema,
+            width=10,
+        )
+        self.btn_tema.grid(row=0, column=1, sticky="ne", padx=(8, 0))
 
         # Campos
         body = ttk.Frame(self, padding=(16, 8, 16, 8))
