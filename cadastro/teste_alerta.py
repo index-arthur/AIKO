@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 
 # ==================== CONFIG ====================
-VERSION = "5.0"
+VERSION = "5.1"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -152,30 +152,46 @@ def aplicar_atualizacao(exe_novo_path):
     temp_dir = tempfile.gettempdir()
     bat_path = os.path.join(temp_dir, f"_aiko_update_{os.getpid()}.bat")
 
+    # Notas sobre o .bat:
+    # - 'ping -n N 127.0.0.1 > nul' espera N-1 segundos SEM criar janela
+    #   (diferente do 'timeout' que pisca uma janela cmd.exe).
+    # - 'setlocal enabledelayedexpansion' permite usar !var! pra ler valor
+    #   atualizado dentro de blocos (necessário pro contador de retries).
+    # - Limite de 30 tentativas (~30s) impede loop infinito caso o arquivo
+    #   esteja permanentemente lockado.
     bat = (
         f'@echo off\r\n'
+        f'setlocal enabledelayedexpansion\r\n'
         f'chcp 65001 > nul\r\n'
-        f'timeout /t 3 /nobreak > nul\r\n'
+        f'ping -n 4 127.0.0.1 > nul\r\n'
+        f'set tries=0\r\n'
         f':retry\r\n'
         f'move /y "{exe_novo_path}" "{exe_atual}" > nul 2>&1\r\n'
-        f'if errorlevel 1 (\r\n'
-        f'  timeout /t 1 /nobreak > nul\r\n'
-        f'  goto retry\r\n'
-        f')\r\n'
-        # Espera 4s depois do move para o Windows Defender terminar de
-        # escanear o novo arquivo. Sem essa pausa, o 'start' logo abaixo
-        # dispara um erro "Failed to load Python DLL" porque o arquivo
-        # ainda está lockado pelo AV enquanto o PyInstaller tenta extrair.
-        f'timeout /t 4 /nobreak > nul\r\n'
+        f'if not errorlevel 1 goto success\r\n'
+        f'set /a tries+=1\r\n'
+        f'if !tries! geq 30 goto fail\r\n'
+        f'ping -n 2 127.0.0.1 > nul\r\n'
+        f'goto retry\r\n'
+        f':success\r\n'
+        # Espera ~4s depois do move pra dar tempo do Defender terminar
+        # o scan do novo arquivo antes de iniciar (evita erro Python DLL).
+        f'ping -n 5 127.0.0.1 > nul\r\n'
         f'start "" "{exe_atual}"\r\n'
+        f'goto end\r\n'
+        f':fail\r\n'
+        # Desistiu de substituir — abre o exe original mesmo (versão antiga)
+        # pra não deixar o usuário sem nada.
+        f'start "" "{exe_atual}"\r\n'
+        f':end\r\n'
         f'del "%~f0"\r\n'
     )
     with open(bat_path, "w", encoding="utf-8") as f:
         f.write(bat)
 
+    CREATE_NO_WINDOW = 0x08000000
     subprocess.Popen(
         ["cmd", "/c", bat_path],
-        creationflags=0x00000008,  # DETACHED_PROCESS
+        creationflags=CREATE_NO_WINDOW,
     )
 
 # ==================== SELENIUM HELPERS ====================
