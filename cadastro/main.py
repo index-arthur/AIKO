@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import time
-import random
 import tempfile
 import threading
 import subprocess
@@ -10,16 +9,14 @@ import webbrowser
 import urllib.request
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import TimeoutException
+
+import sv_ttk
+
+from motor_api import executar_automacao_api, montar_nome
+from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "5.1"
+VERSION = "6.0"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -33,23 +30,33 @@ RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 #   False → comportamento real (consulta o GitHub, baixa e substitui)
 MODO_TESTE_UPDATE = False
 
-GRUPOS_DEFAULT = ["BAR-VN-000", "reserva", "teste", "inativos"]
-MODEL_DEFAULT  = ["AXOR 3344", "feller", "basculante", "forwarder"]
-PERFIL_DEFAULT = ["equipamentos"]
 
 TUTORIAL_TXT = (
     "INFORMAÇÕES NECESSÁRIAS:\n\n"
-    "• Usuário        → Seu usuário sem o @aiko.digital (ex: acosta)\n"
-    "• Senha          → Sua senha de acesso\n"
+    "• Usuário/Senha  → Seu login do TracKit (sem o @aiko.digital).\n"
+    "                   A senha só é usada para autenticar: não vai\n"
+    "                   para disco nem para o log. Depois do 1º login\n"
+    "                   a sessão fica em cache e os campos podem ficar\n"
+    "                   vazios. Conta com MFA/SSO cai no navegador.\n"
     "• Empresa        → Sigla da empresa (ex: BRC, RAI, QA.BRC)\n"
     "• Equipamento    → Tipo (ex: COMODATO, SERVICO DE CAMPO)\n"
     "• Ticket         → Número do ticket (só os números)\n"
     "• Zendesk        → Número do ticket Zendesk (deixe vazio se não tiver)\n"
     "• Parou no bordo → Se parou em algum bordo, o número dele (0 se não parou)\n"
     "• Qtd. Bordos    → Total de bordos a cadastrar\n"
-    "• Grupos         → Termos para achar o grupo no dropdown\n"
-    "• Modelos        → Termos para achar o modelo no dropdown\n"
-    "• Perfil         → Perfil de rede (padrão: equipamentos)\n"
+    "\n"
+    "COMO USAR:\n\n"
+    "1. Preencha Empresa (e usuário/senha, se a sessão expirou)\n"
+    "   e clique em Conectar.\n"
+    "2. Escolha Modelo, Grupo e Perfil nos seletores — eles listam\n"
+    "   os cadastros reais do cliente, com busca por nome ou ID.\n"
+    "3. Preencha os dados do lote. A prévia mostra como vai ficar\n"
+    "   o nome do primeiro equipamento.\n"
+    "4. Clique em Simular para conferir sem gravar nada.\n"
+    "5. Clique em Cadastrar para valer.\n"
+    "\n"
+    "Cada equipamento criado é lido de volta e conferido (nome,\n"
+    "modelo, perfil e grupo). Divergência aparece no log em vermelho.\n"
 )
 
 # ==================== UPDATE CHECK ====================
@@ -194,203 +201,13 @@ def aplicar_atualizacao(exe_novo_path):
         creationflags=CREATE_NO_WINDOW,
     )
 
-# ==================== SELENIUM HELPERS ====================
-def pausa(min_s=0.5, max_s=3.5):
-    time.sleep(random.uniform(min_s, max_s))
-
-def clicar_dropdown(driver, xpaths_botao, xpaths_opcoes, condicao):
-    wait_curto = WebDriverWait(driver, 3)
-    wait_normal = WebDriverWait(driver, 25)
-
-    for xpath in xpaths_botao:
-        try:
-            wait_curto.until(EC.element_to_be_clickable((By.XPATH, xpath))).click()
-            break
-        except TimeoutException:
-            continue
-
-    opcoes = []
-    for xpath in xpaths_opcoes:
-        try:
-            wait_normal.until(EC.visibility_of_element_located((By.XPATH, xpath)))
-            opcoes = driver.find_elements(By.XPATH, xpath + "//li")
-            if opcoes:
-                break
-        except TimeoutException:
-            continue
-
-    for opcao in opcoes:
-        texto = opcao.text.strip().lower()
-        if condicao(texto):
-            opcao.click()
-            return True
-    return False
-
-def login(driver, usuario, senha):
-    wait_curto = WebDriverWait(driver, 3)
-    wait_normal = WebDriverWait(driver, 25)
-    try:
-        botao = wait_curto.until(EC.element_to_be_clickable(
-            (By.XPATH, "//*[@id='social-azuread-aiko']/span")))
-        driver.execute_script("arguments[0].click();", botao)
-    except TimeoutException:
-        wait_normal.until(EC.visibility_of_element_located((By.ID, "UserName")))\
-            .send_keys(usuario)
-        driver.find_element(By.ID, "Password").send_keys(senha, Keys.ENTER)
-
-def fechar_emergencias(driver):
-    while True:
-        botoes = driver.find_elements(
-            By.XPATH, '//*[@id="legacy-global-modals"]//button')
-        if not botoes:
-            break
-        for b in botoes:
-            try:
-                b.click()
-                time.sleep(0.5)
-            except Exception:
-                pass
-
-def click_forcado(driver, el):
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-        ActionChains(driver).move_to_element(el).pause(0.1).click(el).perform()
-    except Exception:
-        pass
-
-def clicar_salvar_ultimo_visivel(driver, timeout=8):
-    wait_local = WebDriverWait(driver, timeout)
-    wait_local.until(EC.visibility_of_element_located((By.ID, "name")))
-    spans = driver.find_elements(
-        By.XPATH, "//*[@id='app']//span[normalize-space()='Salvar']")
-    spans = [s for s in spans if s.is_displayed()]
-    span_salvar = spans[-1]
-    clicavel = span_salvar.find_element(
-        By.XPATH, "./ancestor::button[1] | ./ancestor::a[1]")
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", clicavel)
-    driver.execute_script("arguments[0].click();", clicavel)
-
-def confirmar_sim_se_existir(driver, timeout=3):
-    wait_local = WebDriverWait(driver, timeout)
-    seletores = [
-        (By.CSS_SELECTOR, "button[data-test-ak-confirm-dialog-btn-confirm]"),
-        (By.XPATH, "//button[normalize-space()='Sim']"),
-        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[18]/div[2]/div/div[2]/button[2]'),
-        (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[19]/div[2]/div/div[2]/button[2]'),
-    ]
-    for by, sel in seletores:
-        try:
-            sim = wait_local.until(EC.element_to_be_clickable((by, sel)))
-            click_forcado(driver, sim)
-            time.sleep(0.3)
-            return True
-        except TimeoutException:
-            continue
-    return False
-
-def esperar_loading(driver, timeout=25):
-    try:
-        WebDriverWait(driver, timeout).until(
-            EC.invisibility_of_element_located((By.ID, "waiting-update")))
-    except TimeoutException:
-        pass
-
-# ==================== AUTOMAÇÃO ====================
-def executar_automacao(dados, log):
-    empresa = dados["empresa"]
-    driver = webdriver.Edge()
-    driver.maximize_window()
-    driver.get(f"https://{empresa}.br.trackit.host/")
-
-    log("Fazendo login...")
-    login(driver, dados["usuario"], dados["senha"])
-
-    wait = WebDriverWait(driver, 20)
-    fechar_emergencias(driver)
-
-    log("Abrindo cadastro de bordo...")
-    wait.until(EC.presence_of_element_located((By.ID, "nav-menu")))
-    wait.until(EC.element_to_be_clickable(
-        (By.XPATH, '//*[@id="nav-menu"]/div[1]/div[2]/a'))).click()
-    wait.until(EC.element_to_be_clickable(
-        (By.XPATH, '//*[@id="nav-menu"]/div[1]/div[2]/div/div/section[1]/article/ul/li[4]/a'))).click()
-
-    usa_zendesk = dados["zendesk"].lower() != "n"
-    zendesk_txt = f" | #{dados['zendesk']}" if usa_zendesk else ""
-
-    inicio = dados["parou"] + 1
-    fim = dados["limite"] + 1
-
-    for k in range(inicio, fim):
-        numero = f"{k:02d}"
-        bordo = (f"{empresa} | {dados['equipamento']} | "
-                 f"HWS-{dados['ticket']}{zendesk_txt} | {numero}")
-        log(f"[{k}/{dados['limite']}] {bordo}")
-
-        fechar_emergencias(driver)
-        wait.until(EC.presence_of_element_located((By.ID, "app")))
-        wait.until(EC.element_to_be_clickable(
-            (By.XPATH, '//*[@id="app"]/div[1]/div[5]/div/section/div/div[2]/a/span'))).click()
-        pausa(1, 1.3)
-
-        fechar_emergencias(driver)
-        wait.until(EC.element_to_be_clickable((By.ID, "name"))).send_keys(bordo)
-        pausa(1, 1.3)
-
-        fechar_emergencias(driver); esperar_loading(driver)
-        clicar_dropdown(driver,
-            xpaths_botao=[
-                '//*[@id="equipmentModel"]/div[1]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[4]/div[1]/div/div/div[1]',
-            ],
-            xpaths_opcoes=[
-                '//*[@id="equipmentModel"]/div[3]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[4]/div[1]/div/div/div[3]',
-            ],
-            condicao=lambda t: any(p.lower() in t for p in dados["modelos"]))
-        pausa(0.5, 0.8)
-
-        fechar_emergencias(driver); esperar_loading(driver)
-        clicar_dropdown(driver,
-            xpaths_botao=[
-                '//*[@id="networkProfiles"]/div[1]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[4]/div[3]/div/div/div[1]',
-            ],
-            xpaths_opcoes=[
-                '//*[@id="networkProfiles"]/div[3]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[4]/div[3]/div/div/div[3]',
-            ],
-            condicao=lambda t: any(p.lower() in t for p in dados["perfil"]))
-        pausa(0.5, 0.8)
-
-        fechar_emergencias(driver); esperar_loading(driver)
-        clicar_dropdown(driver,
-            xpaths_botao=[
-                '//*[@id="equipmentGroup"]/div[1]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[7]/div[1]/div/div/div/div[1]',
-            ],
-            xpaths_opcoes=[
-                '//*[@id="equipmentGroup"]/div[3]',
-                '//*[@id="app"]/div[1]/div[5]/div/section/div/div/div[2]/div/div/div[7]/div[1]/div/div/div/div[3]',
-            ],
-            condicao=lambda t: any(p.lower() in t for p in dados["grupos"]))
-        pausa(0.5, 0.8)
-
-        fechar_emergencias(driver)
-        clicar_salvar_ultimo_visivel(driver, timeout=8)
-        confirmar_sim_se_existir(driver, timeout=3)
-        wait.until(EC.invisibility_of_element_located((By.ID, "name")))
-        pausa(0.5, 1)
-
-    log("Finalizado.")
-
 # ==================== HUD ====================
 class CadastroHUD(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Cadastro de Bordo - Aiko  •  v{VERSION}")
-        self.geometry("640x740")
-        self.minsize(580, 680)
+        self.geometry("700x860")
+        self.minsize(620, 560)
         try:
             self.iconbitmap("negao.ico")
         except Exception:
@@ -398,307 +215,350 @@ class CadastroHUD(tk.Tk):
 
         self._aplicar_tema(self._tema_atual)
         self._montar_layout()
+
+        # O minimo vem do que o conteudo realmente precisa. Chutar um valor
+        # deixava o formulario colapsar (o corpo virava 1px e so sobravam os
+        # botoes). O log e o unico que encolhe: por isso entra com pouco e
+        # cresce junto com a janela.
+        self.update_idletasks()
+        self.minsize(640, min(self.winfo_reqheight(), 920))
+
         self.after(200, self._verificar_update_async)
 
     def _aplicar_tema(self, nome):
-        """Aplica um tema (escuro/claro), reconfigurando as cores."""
+        """
+        O sv_ttk cuida de todos os widgets ttk. Aqui so guardamos a paleta
+        para os widgets que NAO sao ttk (o log e o Listbox do seletor), que
+        continuam precisando de cor na mao.
+        """
         self._tema_atual = nome
-        for k, v in self.TEMAS[nome].items():
+        for k, v in self.PALETA[nome].items():
             setattr(self, k, v)
+
+        sv_ttk.set_theme("dark" if nome == "escuro" else "light")
         self._estilo()
-        # ttk pega as novas cores via style, mas widgets tk (log, etc.)
-        # precisam ser reconfigurados manualmente.
+
+        # O set_theme do sv_ttk mexe nos widgets nao-ttk depois desta chamada,
+        # sobrescrevendo o que configurarmos agora. Por isso as cores do log
+        # sao aplicadas tambem no proximo ciclo ocioso - a ultima palavra
+        # precisa ser nossa.
+        self._cores_nao_ttk()
+        self.after_idle(self._cores_nao_ttk)
+
+        if hasattr(self, "btn_tema"):
+            self.btn_tema.configure(
+                text="☀ Claro" if nome == "escuro" else "🌙 Escuro"
+            )
+
+    def _cores_nao_ttk(self):
+        """Log e sufixo do usuario: nao sao ttk, entao levam cor na mao."""
         if hasattr(self, "log"):
             self.log.configure(
                 bg=self.SURFACE, fg=self.TEXT,
                 insertbackground=self.TEXT,
                 selectbackground=self.ACCENT,
             )
+            for tag, cor in (("ok", self.OK), ("erro", self.ERRO),
+                             ("aviso", self.AVISO), ("info", self.SUBTLE)):
+                self.log.tag_configure(tag, foreground=cor)
         if hasattr(self, "_user_suffix"):
             self._user_suffix.configure(bg=self.SURFACE, fg=self.SUBTLE)
-        if hasattr(self, "btn_tema"):
-            self.btn_tema.configure(
-                text="☀ Claro" if nome == "escuro" else "🌙 Escuro"
-            )
 
     def _toggle_tema(self):
-        novo = "claro" if self._tema_atual == "escuro" else "escuro"
-        self._aplicar_tema(novo)
+        self._aplicar_tema("claro" if self._tema_atual == "escuro" else "escuro")
 
-    # Paletas de tema
-    TEMAS = {
+    # Paleta apenas para widgets nao-ttk. Segue as cores do Sun Valley
+    # para o log e a lista nao destoarem do resto da janela.
+    PALETA = {
         "escuro": {
-            "BG":          "#1e1e1e",
-            "SURFACE":     "#2d2d30",
-            "BORDER":      "#3e3e42",
-            "TEXT":        "#e0e0e0",
-            "SUBTLE":      "#9a9a9a",
-            "ACCENT":      "#0e639c",
-            "ACCENT_2":    "#1177bb",
-            "UPDATE_BG":   "#3a3500",
-            "UPDATE_FG":   "#ffd966",
+            "BG": "#1c1c1c", "SURFACE": "#2b2b2b", "BORDER": "#3a3a3a",
+            "TEXT": "#ffffff", "SUBTLE": "#9a9a9a", "ACCENT": "#0078d4",
+            "OK": "#6ccb5f", "ERRO": "#ff6b6b", "AVISO": "#ffd966",
+            "UPDATE_BG": "#3a3500", "UPDATE_FG": "#ffd966",
             "UPDATE_LINK": "#4ea1ff",
         },
         "claro": {
-            "BG":          "#f5f5f5",
-            "SURFACE":     "#ffffff",
-            "BORDER":      "#d0d0d0",
-            "TEXT":        "#1e1e1e",
-            "SUBTLE":      "#666666",
-            "ACCENT":      "#0d6efd",
-            "ACCENT_2":    "#0a58ca",
-            "UPDATE_BG":   "#fff3cd",
-            "UPDATE_FG":   "#664d03",
-            "UPDATE_LINK": "#0d6efd",
+            "BG": "#fafafa", "SURFACE": "#ffffff", "BORDER": "#d6d6d6",
+            "TEXT": "#1a1a1a", "SUBTLE": "#5d5d5d", "ACCENT": "#0078d4",
+            "OK": "#107c10", "ERRO": "#c42b1c", "AVISO": "#9d5d00",
+            "UPDATE_BG": "#fff4ce", "UPDATE_FG": "#6b5300",
+            "UPDATE_LINK": "#0067c0",
         },
     }
-    _tema_atual = "escuro"  # tema inicial
+
+    _tema_atual = "escuro"
 
     def _estilo(self):
-        # Fundo da janela principal
-        self.configure(bg=self.BG)
-
-        style = ttk.Style(self)
-        # 'clam' aceita customização de cor melhor que 'vista' no Windows
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-
-        # ---------- Containers ----------
-        style.configure("TFrame", background=self.BG)
-        style.configure("TLabelframe",
-                        background=self.BG, foreground=self.TEXT,
-                        bordercolor=self.BORDER, lightcolor=self.BORDER,
-                        darkcolor=self.BORDER)
-        style.configure("TLabelframe.Label",
-                        background=self.BG, foreground=self.TEXT)
-
-        # ---------- Labels ----------
-        style.configure("TLabel",
-                        background=self.BG, foreground=self.TEXT,
-                        font=("Segoe UI", 9))
-        style.configure("Header.TLabel",
-                        background=self.BG, foreground=self.TEXT,
-                        font=("Segoe UI", 14, "bold"))
-        style.configure("Sub.TLabel",
-                        background=self.BG, foreground=self.SUBTLE,
-                        font=("Segoe UI", 9))
-
-        # ---------- Banner de update ----------
+        """
+        Só o que o sv_ttk não cobre: o banner de update e um rótulo
+        secundário. Antes eram ~90 linhas configurando cor de cada widget.
+        """
+        style = ttk.Style()
+        style.configure("Sub.TLabel", foreground=self.SUBTLE)
         style.configure("Update.TFrame", background=self.UPDATE_BG)
-        style.configure("Update.TLabel",
-                        background=self.UPDATE_BG,
-                        foreground=self.UPDATE_FG,
-                        font=("Segoe UI", 9, "bold"))
-        style.configure("UpdateLink.TLabel",
-                        background=self.UPDATE_BG,
-                        foreground=self.UPDATE_LINK,
-                        font=("Segoe UI", 9, "underline"))
-
-        # ---------- Entry ----------
-        style.configure("TEntry",
-                        fieldbackground=self.SURFACE,
-                        background=self.SURFACE,
-                        foreground=self.TEXT,
-                        insertcolor=self.TEXT,
-                        bordercolor=self.BORDER,
-                        lightcolor=self.BORDER,
-                        darkcolor=self.BORDER)
-        style.map("TEntry",
-                  fieldbackground=[("readonly", self.SURFACE),
-                                   ("disabled", self.BG)],
-                  foreground=[("disabled", self.SUBTLE)])
-
-        # ---------- Buttons ----------
-        style.configure("TButton",
-                        background=self.SURFACE, foreground=self.TEXT,
-                        bordercolor=self.BORDER,
-                        lightcolor=self.SURFACE, darkcolor=self.SURFACE,
-                        focuscolor=self.BORDER,
-                        font=("Segoe UI", 9), padding=(10, 4))
-        style.map("TButton",
-                  background=[("active", self.BORDER),
-                              ("pressed", self.BORDER)],
-                  foreground=[("disabled", self.SUBTLE)])
-
-        style.configure("Primary.TButton",
-                        background=self.ACCENT, foreground="white",
-                        bordercolor=self.ACCENT,
-                        lightcolor=self.ACCENT, darkcolor=self.ACCENT,
-                        font=("Segoe UI", 10, "bold"), padding=(12, 5))
-        style.map("Primary.TButton",
-                  background=[("active", self.ACCENT_2),
-                              ("pressed", self.ACCENT_2)])
-
-        # ---------- Checkbutton ----------
-        style.configure("TCheckbutton",
-                        background=self.BG, foreground=self.TEXT,
-                        indicatorcolor=self.SURFACE,
-                        focuscolor=self.BG,
-                        font=("Segoe UI", 9))
-        style.map("TCheckbutton",
-                  background=[("active", self.BG)],
-                  indicatorcolor=[("selected", self.ACCENT),
-                                  ("!selected", self.SURFACE)])
-
-        # ---------- Progressbar ----------
-        style.configure("TProgressbar",
-                        background=self.ACCENT,
-                        troughcolor=self.SURFACE,
-                        bordercolor=self.BORDER,
-                        lightcolor=self.ACCENT, darkcolor=self.ACCENT)
-
-        # ---------- Scrollbar (do ScrolledText) ----------
-        style.configure("Vertical.TScrollbar",
-                        background=self.SURFACE,
-                        troughcolor=self.BG,
-                        bordercolor=self.BORDER,
-                        arrowcolor=self.TEXT,
-                        lightcolor=self.SURFACE, darkcolor=self.SURFACE)
+        style.configure(
+            "Update.TLabel", background=self.UPDATE_BG,
+            foreground=self.UPDATE_FG,
+        )
+        style.configure(
+            "UpdateLink.TLabel", background=self.UPDATE_BG,
+            foreground=self.UPDATE_LINK, font=("Segoe UI", 9, "underline"),
+        )
+        style.configure("Ok.TLabel", foreground=self.OK)
+        style.configure("Erro.TLabel", foreground=self.ERRO)
 
     def _montar_layout(self):
-        # Banner de update (inicia vazio, empacotado só se houver update)
-        self.update_bar = ttk.Frame(self, style="Update.TFrame", padding=(10, 6))
+        # Banner de update (fica escondido ate haver update)
+        self.update_bar = ttk.Frame(self, style="Update.TFrame", padding=(12, 7))
         self.update_lbl = ttk.Label(self.update_bar, style="Update.TLabel", text="")
         self.update_link = ttk.Label(self.update_bar, style="UpdateLink.TLabel",
-                                     text="Abrir release →", cursor="hand2")
+                                     text="Abrir release", cursor="hand2")
         self.update_link.bind("<Button-1>", lambda e: webbrowser.open(RELEASES_URL))
         self.update_lbl.pack(side="left")
         self.update_link.pack(side="right")
 
-        # Cabeçalho
-        header = ttk.Frame(self, padding=(16, 14, 16, 4))
+        # ---------- Cabecalho ----------
+        header = ttk.Frame(self, padding=(20, 18, 20, 6))
         header.pack(fill="x")
         header.columnconfigure(0, weight=1)
 
         titulo = ttk.Frame(header)
         titulo.grid(row=0, column=0, sticky="w")
-        ttk.Label(titulo, text="Automação de Cadastro de Bordo",
-                  style="Header.TLabel").pack(anchor="w")
-        ttk.Label(titulo, text=f"Versão {VERSION} — Trackit / Aiko",
-                  style="Sub.TLabel").pack(anchor="w")
+        ttk.Label(titulo, text="Cadastro de Bordo",
+                  style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titulo, text="TracKit / Aiko / v" + VERSION,
+                  style="Caption.TLabel").pack(anchor="w")
 
-        # Botão toggle de tema (canto direito do header)
-        self.btn_tema = ttk.Button(
-            header,
-            text="☀ Claro" if self._tema_atual == "escuro" else "🌙 Escuro",
-            command=self._toggle_tema,
-            width=10,
-        )
-        self.btn_tema.grid(row=0, column=1, sticky="ne", padx=(8, 0))
-
-        # Campos
-        body = ttk.Frame(self, padding=(16, 8, 16, 8))
-        body.pack(fill="x")
-        body.columnconfigure(1, weight=1)
+        self.btn_tema = ttk.Button(header, text="Claro",
+                                   command=self._toggle_tema, width=10)
+        self.btn_tema.grid(row=0, column=1, sticky="ne")
 
         self.vars = {}
 
-        def row(r, label, key, show=None, default=""):
-            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", pady=4)
+        def campo(pai, r, rotulo, chave, default=""):
+            ttk.Label(pai, text=rotulo).grid(
+                row=r, column=0, sticky="w", pady=(0, 2))
             v = tk.StringVar(value=default)
-            e = ttk.Entry(body, textvariable=v, show=show)
-            e.grid(row=r, column=1, sticky="ew", pady=4, padx=(8, 0))
-            self.vars[key] = v
+            e = ttk.Entry(pai, textvariable=v)
+            e.grid(row=r, column=1, sticky="ew", pady=(0, 8), padx=(12, 0))
+            self.vars[chave] = v
+            return e
 
-        # Linha do usuário com sufixo "@aiko.digital" sobreposto à direita
-        ttk.Label(body, text="Usuário:").grid(
-            row=0, column=0, sticky="w", pady=4
-        )
-        usr_var = tk.StringVar()
-        usr_entry = ttk.Entry(body, textvariable=usr_var)
-        usr_entry.grid(row=0, column=1, sticky="ew", pady=4, padx=(8, 0))
-        # tk.Label permite setar bg/fg direto (sem precisar de style)
-        self._user_suffix = tk.Label(
-            usr_entry, text="@aiko.digital",
-            bg=self.SURFACE, fg=self.SUBTLE,
-            font=("Segoe UI", 9), bd=0,
-        )
-        self._user_suffix.place(relx=1.0, rely=0.5, anchor="e", x=-6)
-        self.vars["usuario"] = usr_var
-
-        # Linha da senha com botão de olho pra mostrar/esconder
-        ttk.Label(body, text="Senha:").grid(
-            row=1, column=0, sticky="w", pady=4
-        )
-        sen_frame = ttk.Frame(body)
-        sen_frame.grid(row=1, column=1, sticky="ew", pady=4, padx=(8, 0))
-        sen_frame.columnconfigure(0, weight=1)
-
-        sen_var = tk.StringVar()
-        sen_entry = ttk.Entry(sen_frame, textvariable=sen_var, show="•")
-        sen_entry.grid(row=0, column=0, sticky="ew")
-
-        def toggle_olho():
-            if sen_entry.cget("show") == "":
-                sen_entry.configure(show="•")
-                self.btn_olho.configure(text="👁")
-            else:
-                sen_entry.configure(show="")
-                self.btn_olho.configure(text="🙈")
-
-        self.btn_olho = ttk.Button(
-            sen_frame, text="👁", command=toggle_olho, width=3,
-        )
-        self.btn_olho.grid(row=0, column=1, padx=(4, 0))
-        self.vars["senha"] = sen_var
-
-        row(2, "Empresa (sigla):", "empresa")
-        row(3, "Equipamento:", "equipamento", default="COMODATO")
-        row(4, "Ticket (número):", "ticket")
-        row(5, "Ticket Zendesk (vazio = nenhum):", "zendesk")
-        row(6, "Parou no bordo (0 = não parou):", "parou", default="0")
-        row(7, "Qtd. total de bordos:", "limite")
-
-        def lista(r, label, key, default_list):
-            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", pady=4)
-            frame = ttk.Frame(body)
-            frame.grid(row=r, column=1, sticky="ew", pady=4, padx=(8, 0))
-            frame.columnconfigure(0, weight=1)
-            v = tk.StringVar(value=", ".join(default_list))
-            e = ttk.Entry(frame, textvariable=v)
-            e.grid(row=0, column=0, sticky="ew")
-            usar_padrao = tk.BooleanVar(value=True)
-
-            def toggle():
-                if usar_padrao.get():
-                    v.set(", ".join(default_list))
-                    e.configure(state="disabled")
-                else:
-                    e.configure(state="normal")
-            ttk.Checkbutton(frame, text="padrão", variable=usar_padrao,
-                            command=toggle).grid(row=0, column=1, padx=(6, 0))
-            toggle()
-            self.vars[key] = v
-
-        lista(8,  "Grupos:",  "grupos", GRUPOS_DEFAULT)
-        lista(9,  "Modelos:", "modelos", MODEL_DEFAULT)
-        lista(10, "Perfil:",  "perfil",  PERFIL_DEFAULT)
-
-        # Log
-        log_frame = ttk.LabelFrame(self, text="Log", padding=6)
-        log_frame.pack(fill="both", expand=True, padx=16, pady=(8, 4))
-        self.log = scrolledtext.ScrolledText(log_frame, height=8,
-                                             font=("Consolas", 9),
-                                             state="disabled", wrap="word",
-                                             bg=self.SURFACE, fg=self.TEXT,
-                                             insertbackground=self.TEXT,
-                                             selectbackground=self.ACCENT,
-                                             selectforeground="white",
-                                             borderwidth=0,
-                                             highlightthickness=0)
-        self.log.pack(fill="both", expand=True)
-
-        # Botões
-        botoes = ttk.Frame(self, padding=(16, 4, 16, 14))
-        botoes.pack(fill="x")
-        ttk.Button(botoes, text="Tutorial", command=self._abrir_tutorial)\
-            .pack(side="left")
-        self.btn_iniciar = ttk.Button(botoes, text="▶  Iniciar automação",
-                                      style="Primary.TButton",
+        # O rodape e empacotado ANTES do corpo, com side="bottom": assim ele
+        # reserva o espaco dele primeiro e nunca some quando a janela encolhe.
+        # (Antes o corpo expandia e empurrava o botao Cadastrar para fora.)
+        botoes = ttk.Frame(self, padding=(20, 12, 20, 18))
+        botoes.pack(side="bottom", fill="x")
+        ttk.Button(botoes, text="Tutorial",
+                   command=self._abrir_tutorial).pack(side="left")
+        self.btn_iniciar = ttk.Button(botoes, text="Cadastrar",
+                                      style="Accent.TButton",
                                       command=self._on_iniciar)
         self.btn_iniciar.pack(side="right")
+        self.btn_simular = ttk.Button(
+            botoes, text="Simular",
+            command=lambda: self._on_iniciar(dry_run=True))
+        self.btn_simular.pack(side="right", padx=(0, 8))
+
+        # Tambem antes do corpo: quem expande tem de ser empacotado por
+        # ultimo, senao consome o espaco de quem vier depois.
+        self.progresso = ttk.Progressbar(self, mode="determinate")
+        self.progresso.pack(side="bottom", fill="x", padx=20, pady=(0, 6))
+
+        corpo = ttk.Frame(self, padding=(20, 0))
+        corpo.pack(fill="both", expand=True)
+        corpo.columnconfigure(0, weight=1)
+
+        # ---------- 1. Acesso ----------
+        acesso = ttk.Labelframe(corpo, text=" Acesso ", padding=(14, 10, 14, 12))
+        acesso.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        acesso.columnconfigure(1, weight=1)
+
+        campo(acesso, 0, "Empresa (sigla)", "empresa")
+
+        ttk.Label(acesso, text="Usuario").grid(row=1, column=0, sticky="w",
+                                               pady=(0, 2))
+        self.vars["usuario"] = tk.StringVar()
+        usr = ttk.Entry(acesso, textvariable=self.vars["usuario"])
+        usr.grid(row=1, column=1, sticky="ew", pady=(0, 8), padx=(12, 0))
+        self._user_suffix = tk.Label(usr, text="@aiko.digital",
+                                     bg=self.SURFACE, fg=self.SUBTLE,
+                                     font=("Segoe UI", 9), bd=0)
+        self._user_suffix.place(relx=1.0, rely=0.5, anchor="e", x=-8)
+
+        ttk.Label(acesso, text="Senha").grid(row=2, column=0, sticky="w",
+                                             pady=(0, 2))
+        sen_frame = ttk.Frame(acesso)
+        sen_frame.grid(row=2, column=1, sticky="ew", pady=(0, 8), padx=(12, 0))
+        sen_frame.columnconfigure(0, weight=1)
+        self.vars["senha"] = tk.StringVar()
+        sen = ttk.Entry(sen_frame, textvariable=self.vars["senha"], show="*")
+        sen.grid(row=0, column=0, sticky="ew")
+
+        def olho():
+            visivel = sen.cget("show") == ""
+            sen.configure(show="*" if visivel else "")
+            self.btn_olho.configure(text="ver" if visivel else "ocultar")
+
+        self.btn_olho = ttk.Button(sen_frame, text="ver", command=olho, width=8)
+        self.btn_olho.grid(row=0, column=1, padx=(6, 0))
+
+        conexao = ttk.Frame(acesso)
+        conexao.grid(row=3, column=1, sticky="ew", padx=(12, 0), pady=(4, 0))
+        self.btn_conectar = ttk.Button(conexao, text="Conectar",
+                                       style="Accent.TButton",
+                                       command=self._on_conectar)
+        self.btn_conectar.pack(side="left")
+        self.lbl_conexao = ttk.Label(conexao, text="nao conectado",
+                                     style="Sub.TLabel")
+        self.lbl_conexao.pack(side="left", padx=(12, 0))
+
+        # ---------- 2. Cadastros do cliente ----------
+        self.bloco_cad = ttk.Labelframe(
+            corpo, text=" Cadastros do cliente ", padding=(14, 10, 14, 12))
+        self.bloco_cad.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        self.bloco_cad.columnconfigure(1, weight=1)
+
+        self.selecao = {"modelo": None, "grupo": None, "perfil": None}
+        self.listas = {"modelo": [], "grupo": [], "perfil": []}
+        self.btn_sel = {}
+
+        for r, (chave, rotulo) in enumerate(
+            (("modelo", "Modelo"), ("grupo", "Grupo"),
+             ("perfil", "Perfil de rede"))
+        ):
+            ttk.Label(self.bloco_cad, text=rotulo).grid(
+                row=r, column=0, sticky="w", pady=(0, 6))
+            b = ttk.Button(
+                self.bloco_cad, text="Conecte para escolher",
+                state="disabled",
+                command=lambda k=chave, t=rotulo: self._abrir_seletor(k, t),
+            )
+            b.grid(row=r, column=1, sticky="ew", pady=(0, 6), padx=(12, 0))
+            self.btn_sel[chave] = b
+
+        # ---------- 3. Lote ----------
+        lote = ttk.Labelframe(corpo, text=" Lote ", padding=(14, 10, 14, 12))
+        lote.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        lote.columnconfigure(1, weight=1)
+
+        campo(lote, 0, "Equipamento", "equipamento", default="COMODATO")
+        campo(lote, 1, "Ticket (numero)", "ticket")
+        campo(lote, 2, "Zendesk (opcional)", "zendesk")
+        campo(lote, 3, "Parou no bordo", "parou", default="0")
+        campo(lote, 4, "Qtd. total de bordos", "limite")
+
+        self.lbl_previa = ttk.Label(lote, text="", style="Sub.TLabel")
+        self.lbl_previa.grid(row=5, column=1, sticky="w", padx=(12, 0))
+        for k in ("empresa", "equipamento", "ticket", "zendesk"):
+            self.vars[k].trace_add("write", lambda *_: self._atualizar_previa())
+
+        # ---------- Log ----------
+        log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
+        log_frame.grid(row=3, column=0, sticky="nsew")
+        corpo.rowconfigure(3, weight=1)
+        self.log = scrolledtext.ScrolledText(
+            log_frame, height=6, font=("Consolas", 9),
+            state="disabled", wrap="word", bg=self.SURFACE, fg=self.TEXT,
+            insertbackground=self.TEXT, selectbackground=self.ACCENT,
+            borderwidth=0, highlightthickness=0, relief="flat",
+        )
+        self.log.pack(fill="both", expand=True)
+        for tag, cor in (("ok", self.OK), ("erro", self.ERRO),
+                         ("aviso", self.AVISO), ("info", self.SUBTLE)):
+            self.log.tag_configure(tag, foreground=cor)
+
+
+        self._atualizar_previa()
+        # Reaplica o tema agora que os widgets nao-ttk existem: na 1a chamada
+        # (dentro do __init__) o log e a lista ainda nao tinham sido criados.
+        self._aplicar_tema(self._tema_atual)
+
+    # ----- Previa do nome, ao vivo -----
+    def _atualizar_previa(self):
+        try:
+            dados = {
+                "empresa": self.vars["empresa"].get().strip().upper() or "?",
+                "equipamento":
+                    self.vars["equipamento"].get().strip().upper() or "?",
+                "ticket": self.vars["ticket"].get().strip() or "?",
+                "zendesk": self.vars["zendesk"].get().strip(),
+            }
+            self.lbl_previa.configure(text="Ficara: " + montar_nome(dados, 1))
+        except Exception:
+            self.lbl_previa.configure(text="")
+
+    # ----- Conexao -----
+    def _on_conectar(self):
+        empresa = self.vars["empresa"].get().strip()
+        if not empresa:
+            messagebox.showerror("Falta a empresa",
+                                 "Informe a sigla da empresa primeiro.")
+            return
+
+        self.btn_conectar.configure(state="disabled", text="Conectando...")
+        self.lbl_conexao.configure(text="autenticando...", style="Sub.TLabel")
+
+        prefixo = self.vars["usuario"].get().strip()
+        if prefixo.lower().endswith("@aiko.digital"):
+            prefixo = prefixo[: -len("@aiko.digital")]
+        usuario = (prefixo + "@aiko.digital") if prefixo else None
+        senha = self.vars["senha"].get() or None
+
+        def worker():
+            try:
+                sessao = obter_sessao(
+                    empresa.lower(), usuario=usuario, senha=senha,
+                    log=lambda m: self.after(0, self._log, m),
+                )
+                cli = TrackitClient(empresa.lower(), sessao)
+                listas = {
+                    "modelo": cli.modelos(),
+                    "grupo": cli.grupos(),
+                    "perfil": cli.perfis_rede(),
+                }
+                self.after(0, lambda: self._conectado(empresa, listas))
+            except Exception as e:
+                erro = str(e)
+
+                def falhou():
+                    self.lbl_conexao.configure(text="falhou",
+                                               style="Erro.TLabel")
+                    self._log("Conexao falhou: " + erro, "erro")
+                    messagebox.showerror("Nao conectou", erro)
+                self.after(0, falhou)
+            finally:
+                self.after(0, lambda: self.btn_conectar.configure(
+                    state="normal", text="Conectar"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _conectado(self, empresa, listas):
+        self.listas = listas
+        self.lbl_conexao.configure(
+            text="conectado a " + empresa.upper(), style="Ok.TLabel")
+        self._log(
+            "Conectado: {} modelos, {} grupos, {} perfis.".format(
+                len(listas["modelo"]), len(listas["grupo"]),
+                len(listas["perfil"])), "ok")
+        for chave, botao in self.btn_sel.items():
+            botao.configure(state="normal")
+            if self.selecao[chave] is None:
+                botao.configure(text="Selecionar...")
+        # a senha ja cumpriu o papel: nao fica parada na tela
+        self.vars["senha"].set("")
+
+    def _abrir_seletor(self, chave, rotulo):
+        itens = self.listas.get(chave) or []
+        if not itens:
+            messagebox.showinfo("Sem dados", "Conecte primeiro.")
+            return
+        escolhido = self._dialogo_escolha(rotulo, [], itens)
+        if escolhido:
+            self.selecao[chave] = escolhido
+            self.btn_sel[chave].configure(
+                text="{}  (id {})".format(
+                    (escolhido.get("name") or "").strip(), escolhido["id"]))
 
     # ----- Update -----
     def _verificar_update_async(self):
@@ -752,7 +612,7 @@ class CadastroHUD(tk.Tk):
         def on_depois():
             top.destroy()
 
-        ttk.Button(btns, text="Atualizar agora", style="Primary.TButton",
+        ttk.Button(btns, text="Atualizar agora", style="Accent.TButton",
                    command=on_atualizar).pack(side="left", padx=6)
         ttk.Button(btns, text="Depois", command=on_depois)\
             .pack(side="left", padx=6)
@@ -846,41 +706,252 @@ class CadastroHUD(tk.Tk):
             .pack(pady=(0, 10))
 
     # ----- Log -----
-    def _log(self, msg):
+    def _log(self, msg, tag=None):
+        if tag is None:
+            baixo = msg.lower()
+            if "falhou" in baixo or "erro" in baixo or "diferente" in baixo:
+                tag = "erro"
+            elif msg.strip().startswith("[") and " OK " in msg:
+                tag = "ok"
+            elif "aviso" in baixo or "ja existe" in baixo:
+                tag = "aviso"
         self.log.configure(state="normal")
-        self.log.insert("end", msg + "\n")
+        self.log.insert("end", msg + "\n", tag or ())
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    # ----- Escolha quando os termos casam com mais de um cadastro -----
+    def _montar_dialogo_escolha(self, rotulo, candidatos, todos=None):
+        """
+        Constroi (sem esperar) a janela de escolha. Separado do wait_window
+        para dar para testar as cores sem travar num loop modal.
+
+        candidatos: o que casou com os termos digitados (pre-selecionado).
+        todos:      a lista COMPLETA do tenant, alcancavel pela busca. Sem
+                    isso, quando o termo casa com o cadastro errado nao ha
+                    como chegar no certo - foi o caso do grupo "reserva".
+
+        Retorna (janela, dict_resultado).
+        """
+        todos = todos or candidatos
+        win = tk.Toplevel(self)
+        win.title("Qual {}?".format(rotulo))
+        # O Toplevel NAO herda o tema: sem isto o fundo fica no cinza padrao
+        # do Windows e o TLabel (que tem background=BG) vira um bloco preto.
+        win.configure(bg=self.BG)
+        win.transient(self)
+        win.resizable(True, True)
+        win.minsize(460, 420)
+
+        corpo = ttk.Frame(win, padding=(14, 12, 14, 12))
+        corpo.pack(fill="both", expand=True)
+
+        if len(candidatos) == len(todos):
+            cabecalho = "Escolha o {}:".format(rotulo.lower())
+        elif candidatos:
+            cabecalho = "{} cadastro(s) casaram com os termos.".format(
+                len(candidatos)
+            )
+        else:
+            cabecalho = "Nenhum cadastro casou com os termos."
+        ttk.Label(corpo, text=cabecalho).pack(anchor="w")
+        ttk.Label(
+            corpo,
+            text="Digite para buscar entre os {} do cliente.".format(len(todos)),
+            style="Sub.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        busca_var = tk.StringVar()
+        busca = ttk.Entry(corpo, textvariable=busca_var)
+        busca.pack(fill="x", pady=(0, 8))
+
+        mostrar_todos = tk.BooleanVar(value=not candidatos)
+        ttk.Checkbutton(
+            corpo,
+            text="Mostrar todos (ignorar os termos digitados)",
+            variable=mostrar_todos,
+            command=lambda: atualizar(),
+        ).pack(anchor="w", pady=(0, 6))
+
+        caixa = tk.Frame(
+            corpo, bg=self.BORDER, bd=0, highlightthickness=0
+        )
+        caixa.pack(fill="both", expand=True)
+
+        lst = tk.Listbox(
+            caixa,
+            height=16,
+            width=64,
+            bg=self.SURFACE,
+            fg=self.TEXT,
+            selectbackground=self.ACCENT,
+            selectforeground="#ffffff",
+            activestyle="none",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            exportselection=False,
+            font=("Consolas", 9),
+        )
+        lst.pack(fill="both", expand=True, padx=1, pady=1)
+
+        visiveis = []  # o que esta na lista agora, na mesma ordem
+
+        def atualizar(*_):
+            termo = busca_var.get().strip().lower()
+            # Digitar significa "quero outro": a busca varre a lista INTEIRA.
+            # Se ela ficasse restrita aos candidatos, o caso que motivou isto
+            # (termo 'reserva' casando com o grupo errado) continuaria sem
+            # saida, porque o grupo certo nao esta entre os candidatos.
+            if termo or mostrar_todos.get() or not candidatos:
+                base = todos
+            else:
+                base = candidatos
+            if termo:
+                base = [
+                    x for x in base
+                    if termo in (x.get("name") or "").lower()
+                    or termo == str(x.get("id"))
+                ]
+            visiveis[:] = base
+            lst.delete(0, "end")
+            for c in base:
+                lst.insert(
+                    "end", " {:>12}  {}".format(c.get("id"), c.get("name"))
+                )
+            if base:
+                lst.selection_set(0)
+                lst.activate(0)
+            contador.configure(text="{} item(ns)".format(len(base)))
+
+        resultado = {"item": None}
+
+        def confirmar(_evt=None):
+            sel = lst.curselection()
+            if sel and visiveis:
+                resultado["item"] = visiveis[sel[0]]
+                win.destroy()
+
+        def cancelar(_evt=None):
+            win.destroy()
+
+        lst.bind("<Double-Button-1>", confirmar)
+        win.bind("<Return>", confirmar)
+        win.bind("<Escape>", cancelar)
+        win.protocol("WM_DELETE_WINDOW", cancelar)
+
+        bts = ttk.Frame(corpo)
+        bts.pack(fill="x", pady=(12, 0))
+        ttk.Button(bts, text="Cancelar", command=cancelar).pack(side="left")
+        contador = ttk.Label(bts, text="", style="Sub.TLabel")
+        contador.pack(side="left", padx=(10, 0))
+        ttk.Button(
+            bts, text="Usar este", style="Accent.TButton", command=confirmar
+        ).pack(side="right")
+
+        busca_var.trace_add("write", atualizar)
+        atualizar()
+
+        # centraliza sobre a janela principal
+        win.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - win.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - win.winfo_height()) // 3
+        win.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+
+        lst.focus_set()
+        return win, resultado
+
+    def _dialogo_escolha(self, rotulo, candidatos, todos=None):
+        """Roda no thread da UI. Devolve o item escolhido ou None."""
+        win, resultado = self._montar_dialogo_escolha(rotulo, candidatos, todos)
+        win.grab_set()
+        win.wait_window()
+        return resultado["item"]
+
+    def _escolher_do_worker(self, rotulo, candidatos, todos=None):
+        """Ponte thread do motor -> thread da UI (Tk nao e thread-safe)."""
+        resposta = {}
+        pronto = threading.Event()
+
+        def perguntar():
+            try:
+                resposta["item"] = self._dialogo_escolha(
+                    rotulo, candidatos, todos)
+            finally:
+                pronto.set()
+
+        self.after(0, perguntar)
+        pronto.wait()
+        return resposta.get("item")
+
     # ----- Iniciar -----
-    def _on_iniciar(self):
+    def _on_iniciar(self, dry_run=False):
         try:
             dados = self._coletar_dados()
         except ValueError as e:
             messagebox.showerror("Dados inválidos", str(e))
             return
 
-        self.btn_iniciar.configure(state="disabled", text="Executando...")
-        self._log(f"Iniciando {dados['limite'] - dados['parou']} bordos em "
-                  f"{dados['empresa']}...")
+        total = dados["limite"] - dados["parou"]
+        if not dry_run:
+            if not messagebox.askyesno(
+                "Confirmar cadastro",
+                f"Isto vai CRIAR {total} equipamento(s) em "
+                f"{dados['empresa']} — de verdade, na produção.\n\n"
+                f"Ticket: {dados['ticket']}\n\nContinuar?",
+            ):
+                return
+
+        for b in (self.btn_iniciar, self.btn_simular):
+            b.configure(state="disabled")
+        self.btn_iniciar.configure(text="Executando...")
+        self.progresso["value"] = 0
+        self.progresso["maximum"] = max(total, 1)
+        self._log(("[SIMULAÇÃO] " if dry_run else "")
+                  + f"{total} equipamento(s) em {dados['empresa']}...")
 
         def worker():
             try:
-                executar_automacao(
+                resumo = executar_automacao_api(
                     dados,
                     log=lambda m: self.after(0, self._log, m),
+                    dry_run=dry_run,
+                    progresso=lambda f, t: self.after(
+                        0, lambda: self.progresso.configure(value=f, maximum=t)
+                    ),
+                    escolher=self._escolher_do_worker,
                 )
-                self.after(0, lambda: messagebox.showinfo(
-                    "Finalizado",
-                    f"Foram criados {dados['limite'] - dados['parou']} bordos.\n"
-                    f"Empresa: {dados['empresa']}  |  Ticket: {dados['ticket']}"
-                ))
+                def fim():
+                    if resumo["dry_run"]:
+                        messagebox.showinfo(
+                            "Simulação",
+                            f"{resumo['total'] - resumo['pulados']} seriam "
+                            f"criados.\n{resumo['pulados']} já existem.",
+                        )
+                    elif resumo["falhas"]:
+                        messagebox.showwarning(
+                            "Concluído com problemas",
+                            f"Criados: {resumo['criados']}\n"
+                            f"Já existiam: {resumo['pulados']}\n"
+                            f"COM PROBLEMA: {resumo['falhas']}\n\n"
+                            "Veja o log — cada falha está detalhada.",
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Finalizado",
+                            f"Criados e verificados: {resumo['criados']}\n"
+                            f"Já existiam: {resumo['pulados']}",
+                        )
+                self.after(0, fim)
             except Exception as e:
                 erro = str(e)
                 self.after(0, lambda: messagebox.showerror("Erro", erro))
             finally:
-                self.after(0, lambda: self.btn_iniciar.configure(
-                    state="normal", text="▶  Iniciar automação"))
+                def restaurar():
+                    self.btn_iniciar.configure(
+                        state="normal", text="▶  Iniciar automação")
+                    self.btn_simular.configure(state="normal")
+                self.after(0, restaurar)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -891,12 +962,12 @@ class CadastroHUD(tk.Tk):
                 raise ValueError(f"Preencha o campo: {label}")
             return val
 
-        prefixo_usuario = req("usuario", "Usuário")
-        # Defensivo: se o usuário digitou o @aiko.digital junto, tira aqui
-        if prefixo_usuario.lower().endswith("@aiko.digital"):
-            prefixo_usuario = prefixo_usuario[:-len("@aiko.digital")]
-        usuario = prefixo_usuario + "@aiko.digital"
-        senha = req("senha", "Senha")
+        prefixo = self.vars["usuario"].get().strip()
+        if prefixo.lower().endswith("@aiko.digital"):
+            prefixo = prefixo[: -len("@aiko.digital")]
+        usuario = (prefixo + "@aiko.digital") if prefixo else None
+        senha = self.vars["senha"].get() or None
+
         empresa = req("empresa", "Empresa").upper()
         equipamento = req("equipamento", "Equipamento").upper()
 
@@ -917,15 +988,29 @@ class CadastroHUD(tk.Tk):
         except ValueError:
             raise ValueError("Qtd. total de bordos deve ser um número")
 
-        def lista(k):
-            return [x.strip() for x in self.vars[k].get().split(",") if x.strip()]
+        # Modelo/grupo/perfil vem dos seletores, ja resolvidos: mandamos o ID.
+        # Assim o motor nunca precisa casar termo com nome - some a classe de
+        # erro em que "reserva" pegava o grupo parecido.
+        faltando = [
+            rot
+            for chave, rot in (("modelo", "Modelo"), ("grupo", "Grupo"),
+                               ("perfil", "Perfil de rede"))
+            if not self.selecao.get(chave)
+        ]
+        if faltando:
+            raise ValueError(
+                "Escolha antes: {}.\n(Conecte e clique nos seletores.)".format(
+                    ", ".join(faltando)
+                )
+            )
 
         return dict(
-            usuario=usuario, senha=senha, empresa=empresa,
-            equipamento=equipamento, ticket=ticket, zendesk=zendesk,
-            parou=parou, limite=limite,
-            grupos=lista("grupos"), modelos=lista("modelos"),
-            perfil=lista("perfil"),
+            usuario=usuario, senha=senha,
+            empresa=empresa, equipamento=equipamento, ticket=ticket,
+            zendesk=zendesk, parou=parou, limite=limite,
+            modelos=[str(self.selecao["modelo"]["id"])],
+            grupos=[str(self.selecao["grupo"]["id"])],
+            perfil=[str(self.selecao["perfil"]["id"])],
         )
 
 # ==================== MAIN ====================

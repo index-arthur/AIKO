@@ -1,0 +1,11 @@
+requests==2.34.2
+sv-ttk==2.6.1
+selenium==4.45.0
+
+# selenium so e usado no login pelo navegador (contas com SSO/MFA).
+# O cadastro em si nao abre navegador nenhum.
+#
+# ATENCAO ao gerar o .exe: o sv_ttk carrega arquivos .tcl em runtime e o
+# PyInstaller nao os coleta sozinho. O build precisa de:
+#     pyinstaller --collect-data sv_ttk ...
+# Sem isso o executavel abre e quebra na hora de aplicar o tema.

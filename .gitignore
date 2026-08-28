@@ -1,0 +1,3 @@
+.sessao_*.json
+__pycache__/
+*.pyc
