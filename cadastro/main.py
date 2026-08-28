@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, scrolledtext
 import sv_ttk
 
 from motor_api import executar_automacao_api, montar_nome
+from motor_vinculo import executar_vinculacao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
@@ -57,6 +58,27 @@ TUTORIAL_TXT = (
     "\n"
     "Cada equipamento criado é lido de volta e conferido (nome,\n"
     "modelo, perfil e grupo). Divergência aparece no log em vermelho.\n"
+    "\n"
+    "ABA VINCULAÇÃO:\n\n"
+    "Liga os computadores de bordo aos equipamentos. Informe o filtro\n"
+    "(ex: HWS-6848) e cole os seriais, um por linha.\n"
+    "\n"
+    "O pareamento é POR POSIÇÃO: o 1º serial vai para o equipamento 01,\n"
+    "o 2º para o 02, e assim por diante. Por isso as contagens precisam\n"
+    "bater — se não baterem, ele para e não grava nada.\n"
+    "\n"
+    "Device que ainda não existe no TracKit é CADASTRADO e vinculado no\n"
+    "mesmo passo — a simulação marca esses com [NOVO].\n"
+    "\n"
+    "Barra antes de gravar quando: o serial já está vinculado a outro\n"
+    "equipamento, está repetido na sua lista, está cadastrado em\n"
+    "duplicidade no TracKit, o equipamento já tem device, ou as\n"
+    "contagens não batem.\n"
+    "\n"
+    "IMPORTANTE: Simular nunca grava. Confira o de-para no log e só\n"
+    "então clique em Vincular. Como device inexistente vira cadastro\n"
+    "novo, um IMEI digitado errado não dá erro — vira um device com o\n"
+    "número torto. A conferência na simulação é o que evita isso.\n"
 )
 
 # ==================== UPDATE CHECK ====================
@@ -261,6 +283,13 @@ class CadastroHUD(tk.Tk):
             for tag, cor in (("ok", self.OK), ("erro", self.ERRO),
                              ("aviso", self.AVISO), ("info", self.SUBTLE)):
                 self.log.tag_configure(tag, foreground=cor)
+        if hasattr(self, "txt_seriais"):
+            self.txt_seriais.configure(
+                bg=self.SURFACE, fg=self.TEXT,
+                insertbackground=self.TEXT,
+                selectbackground=self.ACCENT,
+                highlightbackground=self.BORDER, highlightcolor=self.ACCENT,
+            )
         if hasattr(self, "_user_suffix"):
             self._user_suffix.configure(bg=self.SURFACE, fg=self.SUBTLE)
 
@@ -353,11 +382,11 @@ class CadastroHUD(tk.Tk):
                    command=self._abrir_tutorial).pack(side="left")
         self.btn_iniciar = ttk.Button(botoes, text="Cadastrar",
                                       style="Accent.TButton",
-                                      command=self._on_iniciar)
+                                      command=self._on_acao)
         self.btn_iniciar.pack(side="right")
         self.btn_simular = ttk.Button(
             botoes, text="Simular",
-            command=lambda: self._on_iniciar(dry_run=True))
+            command=lambda: self._on_acao(dry_run=True))
         self.btn_simular.pack(side="right", padx=(0, 8))
 
         # Tambem antes do corpo: quem expande tem de ser empacotado por
@@ -413,10 +442,22 @@ class CadastroHUD(tk.Tk):
                                      style="Sub.TLabel")
         self.lbl_conexao.pack(side="left", padx=(12, 0))
 
-        # ---------- 2. Cadastros do cliente ----------
+        # ---------- Abas ----------
+        self.abas = ttk.Notebook(corpo)
+        self.abas.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        self.abas.bind("<<NotebookTabChanged>>", self._ao_trocar_aba)
+
+        aba_cad = ttk.Frame(self.abas, padding=(12, 12))
+        aba_vin = ttk.Frame(self.abas, padding=(12, 12))
+        self.abas.add(aba_cad, text="  Cadastro de Bordo  ")
+        self.abas.add(aba_vin, text="  Vinculacao  ")
+        aba_cad.columnconfigure(0, weight=1)
+        aba_vin.columnconfigure(0, weight=1)
+
+        # ---------- Aba 1: cadastro ----------
         self.bloco_cad = ttk.Labelframe(
-            corpo, text=" Cadastros do cliente ", padding=(14, 10, 14, 12))
-        self.bloco_cad.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+            aba_cad, text=" Cadastros do cliente ", padding=(14, 10, 14, 12))
+        self.bloco_cad.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         self.bloco_cad.columnconfigure(1, weight=1)
 
         self.selecao = {"modelo": None, "grupo": None, "perfil": None}
@@ -437,9 +478,8 @@ class CadastroHUD(tk.Tk):
             b.grid(row=r, column=1, sticky="ew", pady=(0, 6), padx=(12, 0))
             self.btn_sel[chave] = b
 
-        # ---------- 3. Lote ----------
-        lote = ttk.Labelframe(corpo, text=" Lote ", padding=(14, 10, 14, 12))
-        lote.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        lote = ttk.Labelframe(aba_cad, text=" Lote ", padding=(14, 10, 14, 12))
+        lote.grid(row=1, column=0, sticky="ew")
         lote.columnconfigure(1, weight=1)
 
         campo(lote, 0, "Equipamento", "equipamento", default="COMODATO")
@@ -453,10 +493,50 @@ class CadastroHUD(tk.Tk):
         for k in ("empresa", "equipamento", "ticket", "zendesk"):
             self.vars[k].trace_add("write", lambda *_: self._atualizar_previa())
 
+        # ---------- Aba 2: vinculacao ----------
+        bloco_vin = ttk.Labelframe(
+            aba_vin, text=" Vincular bordos aos equipamentos ",
+            padding=(14, 10, 14, 12))
+        bloco_vin.grid(row=0, column=0, sticky="ew")
+        bloco_vin.columnconfigure(1, weight=1)
+
+        ttk.Label(bloco_vin, text="Filtro do equipamento").grid(
+            row=0, column=0, sticky="w", pady=(0, 2))
+        self.vars["filtro"] = tk.StringVar()
+        ttk.Entry(bloco_vin, textvariable=self.vars["filtro"]).grid(
+            row=0, column=1, sticky="ew", pady=(0, 2), padx=(12, 0))
+        ttk.Label(
+            bloco_vin,
+            text="ex: HWS-6848 - pega os equipamentos do lote, em ordem",
+            style="Sub.TLabel",
+        ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(0, 10))
+
+        ttk.Label(bloco_vin, text="Seriais").grid(
+            row=2, column=0, sticky="nw", pady=(0, 2))
+        self.txt_seriais = tk.Text(
+            bloco_vin, height=8, wrap="none", font=("Consolas", 9),
+            bg=self.SURFACE, fg=self.TEXT, insertbackground=self.TEXT,
+            selectbackground=self.ACCENT, borderwidth=0,
+            highlightthickness=1, relief="flat",
+        )
+        self.txt_seriais.grid(row=2, column=1, sticky="ew", padx=(12, 0))
+        self.txt_seriais.bind("<KeyRelease>", lambda e: self._contar_seriais())
+
+        self.lbl_seriais = ttk.Label(bloco_vin, text="", style="Sub.TLabel")
+        self.lbl_seriais.grid(row=3, column=1, sticky="w", padx=(12, 0),
+                              pady=(6, 0))
+        ttk.Label(
+            bloco_vin,
+            text="Um serial por linha, na ordem: o 1o vai para o equipamento\n"
+                 "01, o 2o para o 02, e assim por diante. As contagens\n"
+                 "precisam bater - a confirmacao aparece antes de gravar.",
+            style="Sub.TLabel", justify="left",
+        ).grid(row=4, column=1, sticky="w", padx=(12, 0), pady=(8, 0))
+
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
-        log_frame.grid(row=3, column=0, sticky="nsew")
-        corpo.rowconfigure(3, weight=1)
+        log_frame.grid(row=2, column=0, sticky="nsew")
+        corpo.rowconfigure(2, weight=1)
         self.log = scrolledtext.ScrolledText(
             log_frame, height=6, font=("Consolas", 9),
             state="disabled", wrap="word", bg=self.SURFACE, fg=self.TEXT,
@@ -473,6 +553,126 @@ class CadastroHUD(tk.Tk):
         # Reaplica o tema agora que os widgets nao-ttk existem: na 1a chamada
         # (dentro do __init__) o log e a lista ainda nao tinham sido criados.
         self._aplicar_tema(self._tema_atual)
+
+    # ----- Abas -----
+    def _aba_atual(self):
+        try:
+            return self.abas.index(self.abas.select())
+        except Exception:
+            return 0
+
+    def _ao_trocar_aba(self, _evt=None):
+        vinculo = self._aba_atual() == 1
+        self.btn_iniciar.configure(text="Vincular" if vinculo else "Cadastrar")
+
+    def _on_acao(self, dry_run=False):
+        """O botao principal serve as duas abas."""
+        if self._aba_atual() == 1:
+            self._on_vincular(dry_run=dry_run)
+        else:
+            self._on_iniciar(dry_run=dry_run)
+
+    def _seriais_digitados(self):
+        bruto = self.txt_seriais.get("1.0", "end")
+        return [ln.strip() for ln in bruto.splitlines() if ln.strip()]
+
+    def _contar_seriais(self):
+        n = len(self._seriais_digitados())
+        self.lbl_seriais.configure(
+            text="{} serial(is) na lista".format(n) if n else "")
+
+    def _on_vincular(self, dry_run=False):
+        filtro = self.vars["filtro"].get().strip()
+        seriais = self._seriais_digitados()
+        if not filtro:
+            messagebox.showerror(
+                "Falta o filtro",
+                "Informe o filtro do equipamento (ex: HWS-6848).")
+            return
+        if not seriais:
+            messagebox.showerror("Falta a lista", "Cole os seriais, um por linha.")
+            return
+
+        empresa = self.vars["empresa"].get().strip().upper()
+        if not empresa:
+            messagebox.showerror("Falta a empresa", "Informe a sigla da empresa.")
+            return
+
+        if not dry_run and not messagebox.askyesno(
+            "Confirmar vinculação",
+            f"Isto vai VINCULAR {len(seriais)} bordo(s) em {empresa} — "
+            f"de verdade, na produção.\n\n"
+            f"Filtro: {filtro}\n\nContinuar?",
+        ):
+            return
+
+        prefixo = self.vars["usuario"].get().strip()
+        if prefixo.lower().endswith("@aiko.digital"):
+            prefixo = prefixo[: -len("@aiko.digital")]
+
+        dados = dict(
+            empresa=empresa,
+            usuario=(prefixo + "@aiko.digital") if prefixo else None,
+            senha=self.vars["senha"].get() or None,
+            filtro=filtro, seriais=seriais,
+        )
+
+        for b in (self.btn_iniciar, self.btn_simular):
+            b.configure(state="disabled")
+        self.progresso["value"] = 0
+        self.progresso["maximum"] = max(len(seriais), 1)
+        self._log(("[SIMULAÇÃO] " if dry_run else "")
+                  + f"Vinculação: {len(seriais)} bordo(s) em {empresa}...")
+
+        def worker():
+            try:
+                resumo = executar_vinculacao(
+                    dados,
+                    log=lambda m, t=None: self.after(0, self._log, m, t),
+                    dry_run=dry_run,
+                    progresso=lambda f, t: self.after(
+                        0, lambda: self.progresso.configure(value=f, maximum=t)
+                    ),
+                )
+
+                def fim():
+                    if resumo["problemas"]:
+                        messagebox.showwarning(
+                            "Nada foi gravado",
+                            "A vinculação foi barrada:\n\n- "
+                            + "\n- ".join(resumo["problemas"][:6]),
+                        )
+                    elif resumo["dry_run"]:
+                        messagebox.showinfo(
+                            "Simulação",
+                            f"{resumo['total']} vínculo(s) prontos.\n"
+                            "Confira o de-para no log.",
+                        )
+                    elif resumo["falhas"]:
+                        messagebox.showwarning(
+                            "Concluído com problemas",
+                            f"Vinculados: {resumo['vinculados']}\n"
+                            f"COM PROBLEMA: {resumo['falhas']}\n\n"
+                            "Veja o log.",
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Finalizado",
+                            f"{resumo['vinculados']} bordo(s) vinculados "
+                            f"e conferidos.\n"
+                            f"{resumo.get('criados', 0)} foram criados agora.",
+                        )
+                self.after(0, fim)
+            except Exception as e:
+                erro = str(e)
+                self.after(0, lambda: messagebox.showerror("Erro", erro))
+            finally:
+                def restaurar():
+                    self.btn_iniciar.configure(state="normal")
+                    self.btn_simular.configure(state="normal")
+                self.after(0, restaurar)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ----- Previa do nome, ao vivo -----
     def _atualizar_previa(self):
@@ -545,8 +745,9 @@ class CadastroHUD(tk.Tk):
             botao.configure(state="normal")
             if self.selecao[chave] is None:
                 botao.configure(text="Selecionar...")
-        # a senha ja cumpriu o papel: nao fica parada na tela
-        self.vars["senha"].set("")
+        # A senha continua no campo (igual ao usuario) para nao ter de
+        # digitar de novo ao reconectar. Fica so em memoria enquanto o app
+        # esta aberto: nao vai para disco nem para o arquivo de sessao.
 
     def _abrir_seletor(self, chave, rotulo):
         itens = self.listas.get(chave) or []
