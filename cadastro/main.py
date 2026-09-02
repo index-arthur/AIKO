@@ -19,7 +19,7 @@ from motor_vinculo import executar_vinculacao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.1"
+VERSION = "6.2"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -31,7 +31,7 @@ RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 #   True  → força o banner aparecer; o "Atualizar" simula o download
 #            (não substitui o .exe de verdade)
 #   False → comportamento real (consulta o GitHub, baixa e substitui)
-MODO_TESTE_UPDATE = False
+MODO_TESTE_UPDATE = True
 
 
 TUTORIAL_TXT = (
@@ -122,10 +122,14 @@ def checar_atualizacao(timeout=5):
             data = json.loads(resp.read().decode("utf-8"))
 
         tag = (data.get("tag_name") or "").lstrip("v").strip()
+        # Prefere o instalador. A release pode ter mais de um .exe (o
+        # instalador e, por um tempo, o executavel avulso da migracao);
+        # pegar "o primeiro .exe" traria o errado dependendo da ordem.
+        assets = [a for a in data.get("assets", [])
+                  if a.get("name", "").lower().endswith(".exe")]
         exe_asset = next(
-            (a for a in data.get("assets", [])
-             if a.get("name", "").lower().endswith(".exe")),
-            None,
+            (a for a in assets if "setup" in a.get("name", "").lower()),
+            assets[0] if assets else None,
         )
         return {
             "tem_update": _comparar_versoes(tag, VERSION),
@@ -166,64 +170,87 @@ def baixar_nova_versao(exe_url, progresso_cb, timeout=60):
     progresso_cb(100)
     return destino
 
-def aplicar_atualizacao(exe_novo_path):
-    """Agenda a substituição do .exe atual via script .bat.
+def _caminho_curto(caminho):
+    """
+    Devolve o caminho no formato 8.3 (C:\\Users\\ARTHUR~1\\...).
 
-    IMPORTANTE: esta função NÃO encerra o programa. Quem chama é
-    responsável por chamar os._exit(0) no thread principal para que
-    o processo realmente feche e libere o .exe para substituição.
+    Serve para escrever caminhos em .bat sem depender de codepage: o nome
+    curto é sempre ASCII. Se o Windows não souber encurtar (volume sem
+    suporte a nome curto), devolve o original — melhor tentar do que falhar.
+    """
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(600)
+    n = ctypes.windll.kernel32.GetShortPathNameW(
+        str(caminho), buf, len(buf))
+    curto = buf.value if n else ""
+    if not curto:
+        return caminho
+    try:
+        curto.encode("ascii")
+    except UnicodeEncodeError:
+        return caminho
+    return curto
+
+
+def aplicar_atualizacao(instalador_path):
+    """Dispara o instalador baixado, em modo silencioso.
+
+    A v6.2 passou a ser distribuída como app instalado, e a atualização
+    virou "rodar o instalador novo por cima". Antes o app trocava o próprio
+    .exe com um .bat que tentava o `move` 30 vezes até o arquivo destravar —
+    frágil e sem jeito de voltar atrás se falhasse no meio.
+
+    O que os parâmetros fazem:
+      /SILENT             mostra só a barra de progresso, sem perguntar nada
+      /CLOSEAPPLICATIONS  fecha este app para liberar os arquivos
+      /NORESTART          nunca reinicia a máquina
+      /LOG                deixa rastro em %TEMP% para depurar
+
+    Quem reabre o app é este código, não o instalador. A entrada [Run] com
+    `postinstall` do Inno não dispara de forma confiável em modo silencioso
+    (testado: o app fechava e não voltava), e "atualizou e a janela sumiu"
+    parece defeito para quem está usando. Por isso um `cmd` solto espera o
+    instalador terminar e sobe o app de novo — ele sobrevive ao
+    /CLOSEAPPLICATIONS porque é outro processo.
     """
     if not getattr(sys, "frozen", False):
         raise RuntimeError(
-            "Auto-update só funciona no .exe compilado.\n"
-            "Em modo dev (python teste_alerta.py), baixe manualmente."
+            "Auto-update só funciona no app instalado.\n"
+            "Em modo dev (python main.py), atualize pelo git."
         )
 
-    exe_atual = sys.executable
     temp_dir = tempfile.gettempdir()
+    log_path = os.path.join(temp_dir, f"aiko_update_{os.getpid()}.log")
     bat_path = os.path.join(temp_dir, f"_aiko_update_{os.getpid()}.bat")
 
-    # Notas sobre o .bat:
-    # - 'ping -n N 127.0.0.1 > nul' espera N-1 segundos SEM criar janela
-    #   (diferente do 'timeout' que pisca uma janela cmd.exe).
-    # - 'setlocal enabledelayedexpansion' permite usar !var! pra ler valor
-    #   atualizado dentro de blocos (necessário pro contador de retries).
-    # - Limite de 30 tentativas (~30s) impede loop infinito caso o arquivo
-    #   esteja permanentemente lockado.
+    # Caminho curto (8.3) para tudo que entra no .bat. O perfil do usuario
+    # pode ter acento — "C:\Users\ArthurSalomãoSantosC\..." — e o cmd lê
+    # .bat na codepage OEM, não em UTF-8: o caminho chega corrompido e o
+    # `start` falha em silêncio, sem errorlevel. Testado: o instalador
+    # rodava, o app não voltava, e nada indicava o porquê.
+    setup_c = _caminho_curto(instalador_path)
+    exe_c = _caminho_curto(sys.executable)
+    log_c = _caminho_curto(temp_dir) + f"\\aiko_update_{os.getpid()}.log"
+
+    # Um .bat, e não `cmd /c "instalador & start"`: encadear com & exige
+    # aspas dentro de aspas, e as regras do cmd comem as externas — nesse
+    # caminho o instalador simplesmente não executava.
     bat = (
-        f'@echo off\r\n'
-        f'setlocal enabledelayedexpansion\r\n'
-        f'chcp 65001 > nul\r\n'
-        f'ping -n 4 127.0.0.1 > nul\r\n'
-        f'set tries=0\r\n'
-        f':retry\r\n'
-        f'move /y "{exe_novo_path}" "{exe_atual}" > nul 2>&1\r\n'
-        f'if not errorlevel 1 goto success\r\n'
-        f'set /a tries+=1\r\n'
-        f'if !tries! geq 30 goto fail\r\n'
-        f'ping -n 2 127.0.0.1 > nul\r\n'
-        f'goto retry\r\n'
-        f':success\r\n'
-        # Espera ~4s depois do move pra dar tempo do Defender terminar
-        # o scan do novo arquivo antes de iniciar (evita erro Python DLL).
-        f'ping -n 5 127.0.0.1 > nul\r\n'
-        f'start "" "{exe_atual}"\r\n'
-        f'goto end\r\n'
-        f':fail\r\n'
-        # Desistiu de substituir — abre o exe original mesmo (versão antiga)
-        # pra não deixar o usuário sem nada.
-        f'start "" "{exe_atual}"\r\n'
-        f':end\r\n'
-        f'del "%~f0"\r\n'
+        "@echo off\r\n"
+        f'"{setup_c}" /SILENT /CLOSEAPPLICATIONS /NORESTART /LOG="{log_c}"\r\n'
+        # Só reabre se o instalador terminou bem. Se falhou, o app antigo
+        # continua instalado e a pessoa reabre pelo atalho de sempre.
+        "if errorlevel 1 goto fim\r\n"
+        f'start "" "{exe_c}"\r\n'
+        ":fim\r\n"
+        'del "%~f0"\r\n'
     )
-    with open(bat_path, "w", encoding="utf-8") as f:
+    with open(bat_path, "w", encoding="ascii", errors="strict") as f:
         f.write(bat)
 
     CREATE_NO_WINDOW = 0x08000000
-    subprocess.Popen(
-        ["cmd", "/c", bat_path],
-        creationflags=CREATE_NO_WINDOW,
-    )
+    subprocess.Popen(["cmd", "/c", bat_path], creationflags=CREATE_NO_WINDOW)
 
 # ==================== HUD ====================
 class CadastroHUD(tk.Tk):

@@ -1,3 +1,5 @@
 .sessao_*.json
 __pycache__/
 *.pyc
+cadastro/_build/
+cadastro/_setup/
