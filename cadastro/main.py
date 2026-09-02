@@ -19,7 +19,7 @@ from motor_vinculo import executar_vinculacao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.0"
+VERSION = "6.1"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
