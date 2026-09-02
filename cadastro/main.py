@@ -13,6 +13,8 @@ from tkinter import ttk, messagebox, scrolledtext
 import sv_ttk
 
 from motor_api import executar_automacao_api, montar_nome
+from motor_starlink import executar_starlink
+from motor_starlink import montar_nome as montar_nome_sl
 from motor_vinculo import executar_vinculacao
 from trackit_api_client import TrackitClient, obter_sessao
 
@@ -283,13 +285,16 @@ class CadastroHUD(tk.Tk):
             for tag, cor in (("ok", self.OK), ("erro", self.ERRO),
                              ("aviso", self.AVISO), ("info", self.SUBTLE)):
                 self.log.tag_configure(tag, foreground=cor)
-        if hasattr(self, "txt_seriais"):
-            self.txt_seriais.configure(
-                bg=self.SURFACE, fg=self.TEXT,
-                insertbackground=self.TEXT,
-                selectbackground=self.ACCENT,
-                highlightbackground=self.BORDER, highlightcolor=self.ACCENT,
-            )
+        for _attr in ("txt_seriais", "txt_starlink"):
+            _w = getattr(self, _attr, None)
+            if _w is not None:
+                _w.configure(
+                    bg=self.SURFACE, fg=self.TEXT,
+                    insertbackground=self.TEXT,
+                    selectbackground=self.ACCENT,
+                    highlightbackground=self.BORDER,
+                    highlightcolor=self.ACCENT,
+                )
         if hasattr(self, "_user_suffix"):
             self._user_suffix.configure(bg=self.SURFACE, fg=self.SUBTLE)
 
@@ -449,10 +454,12 @@ class CadastroHUD(tk.Tk):
 
         aba_cad = ttk.Frame(self.abas, padding=(12, 12))
         aba_vin = ttk.Frame(self.abas, padding=(12, 12))
+        aba_sl = ttk.Frame(self.abas, padding=(12, 12))
         self.abas.add(aba_cad, text="  Cadastro de Bordo  ")
         self.abas.add(aba_vin, text="  Vinculacao  ")
-        aba_cad.columnconfigure(0, weight=1)
-        aba_vin.columnconfigure(0, weight=1)
+        self.abas.add(aba_sl, text="  Starlink  ")
+        for _f in (aba_cad, aba_vin, aba_sl):
+            _f.columnconfigure(0, weight=1)
 
         # ---------- Aba 1: cadastro ----------
         self.bloco_cad = ttk.Labelframe(
@@ -533,6 +540,49 @@ class CadastroHUD(tk.Tk):
             style="Sub.TLabel", justify="left",
         ).grid(row=4, column=1, sticky="w", padx=(12, 0), pady=(8, 0))
 
+        # ---------- Aba 3: Starlink ----------
+        bloco_sl = ttk.Labelframe(
+            aba_sl, text=" Cadastrar Starlink ", padding=(14, 10, 14, 12))
+        bloco_sl.grid(row=0, column=0, sticky="ew")
+        bloco_sl.columnconfigure(1, weight=1)
+
+        ttk.Label(bloco_sl, text="Modelo do kit").grid(
+            row=0, column=0, sticky="w", pady=(0, 2))
+        self.vars["prefixo_sl"] = tk.StringVar(value="SM")
+        linha_pref = ttk.Frame(bloco_sl)
+        linha_pref.grid(row=0, column=1, sticky="w", pady=(0, 2), padx=(12, 0))
+        for val, rot in (("SM", "Starlink Mini (SM)"),
+                         ("SV", "Starlink V4 (SV)")):
+            ttk.Radiobutton(linha_pref, text=rot, value=val,
+                            variable=self.vars["prefixo_sl"],
+                            command=self._previa_starlink).pack(side="left",
+                                                                padx=(0, 16))
+
+        ttk.Label(bloco_sl, text="S/N dos kits").grid(
+            row=1, column=0, sticky="nw", pady=(8, 2))
+        self.txt_starlink = tk.Text(
+            bloco_sl, height=8, wrap="none", font=("Consolas", 9),
+            bg=self.SURFACE, fg=self.TEXT, insertbackground=self.TEXT,
+            selectbackground=self.ACCENT, borderwidth=0,
+            highlightthickness=1, relief="flat",
+        )
+        self.txt_starlink.grid(row=1, column=1, sticky="ew", padx=(12, 0),
+                               pady=(8, 0))
+        self.txt_starlink.bind("<KeyRelease>",
+                               lambda e: self._previa_starlink())
+
+        self.lbl_starlink = ttk.Label(bloco_sl, text="", style="Sub.TLabel")
+        self.lbl_starlink.grid(row=2, column=1, sticky="w", padx=(12, 0),
+                               pady=(6, 0))
+
+        ttk.Label(
+            bloco_sl,
+            text="Um S/N por linha. Cada kit vira um equipamento\n"
+                 "\"SM - <S/N>\" no modelo Starlink e grupo Starlink Aiko,\n"
+                 "mais o device type 3 (Globalstar) ja vinculado.",
+            style="Sub.TLabel", justify="left",
+        ).grid(row=3, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
+
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
         log_frame.grid(row=2, column=0, sticky="nsew")
@@ -562,13 +612,17 @@ class CadastroHUD(tk.Tk):
             return 0
 
     def _ao_trocar_aba(self, _evt=None):
-        vinculo = self._aba_atual() == 1
-        self.btn_iniciar.configure(text="Vincular" if vinculo else "Cadastrar")
+        rotulos = {0: "Cadastrar", 1: "Vincular", 2: "Cadastrar Starlink"}
+        self.btn_iniciar.configure(
+            text=rotulos.get(self._aba_atual(), "Cadastrar"))
 
     def _on_acao(self, dry_run=False):
-        """O botao principal serve as duas abas."""
-        if self._aba_atual() == 1:
+        """O botao principal serve as tres abas."""
+        aba = self._aba_atual()
+        if aba == 1:
             self._on_vincular(dry_run=dry_run)
+        elif aba == 2:
+            self._on_starlink(dry_run=dry_run)
         else:
             self._on_iniciar(dry_run=dry_run)
 
@@ -661,6 +715,109 @@ class CadastroHUD(tk.Tk):
                             f"{resumo['vinculados']} bordo(s) vinculados "
                             f"e conferidos.\n"
                             f"{resumo.get('criados', 0)} foram criados agora.",
+                        )
+                self.after(0, fim)
+            except Exception as e:
+                erro = str(e)
+                self.after(0, lambda: messagebox.showerror("Erro", erro))
+            finally:
+                def restaurar():
+                    self.btn_iniciar.configure(state="normal")
+                    self.btn_simular.configure(state="normal")
+                self.after(0, restaurar)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ----- Starlink -----
+    def _seriais_starlink(self):
+        bruto = self.txt_starlink.get("1.0", "end")
+        return [ln.strip() for ln in bruto.splitlines() if ln.strip()]
+
+    def _previa_starlink(self):
+        seriais = self._seriais_starlink()
+        prefixo = self.vars["prefixo_sl"].get()
+        if not seriais:
+            self.lbl_starlink.configure(text="")
+            return
+        self.lbl_starlink.configure(
+            text="{} kit(s) · o 1º ficará: {}".format(
+                len(seriais), montar_nome_sl(prefixo, seriais[0])))
+
+    def _on_starlink(self, dry_run=False):
+        seriais = self._seriais_starlink()
+        empresa = self.vars["empresa"].get().strip().upper()
+        prefixo = self.vars["prefixo_sl"].get()
+
+        if not empresa:
+            messagebox.showerror("Falta a empresa", "Informe a sigla da empresa.")
+            return
+        if not seriais:
+            messagebox.showerror("Falta a lista", "Cole os S/N, um por linha.")
+            return
+
+        if not dry_run and not messagebox.askyesno(
+            "Confirmar cadastro de Starlink",
+            f"Isto vai CRIAR {len(seriais)} Starlink em {empresa} — "
+            f"de verdade, na produção.\n\n"
+            f"Cada kit gera um equipamento ({prefixo} - S/N) e um device.\n\n"
+            "Continuar?",
+        ):
+            return
+
+        prefixo_usr = self.vars["usuario"].get().strip()
+        if prefixo_usr.lower().endswith("@aiko.digital"):
+            prefixo_usr = prefixo_usr[: -len("@aiko.digital")]
+
+        dados = dict(
+            empresa=empresa,
+            usuario=(prefixo_usr + "@aiko.digital") if prefixo_usr else None,
+            senha=self.vars["senha"].get() or None,
+            seriais=seriais, prefixo=prefixo,
+        )
+
+        for b in (self.btn_iniciar, self.btn_simular):
+            b.configure(state="disabled")
+        self.progresso["value"] = 0
+        self.progresso["maximum"] = max(len(seriais), 1)
+        self._log(("[SIMULAÇÃO] " if dry_run else "")
+                  + f"Starlink: {len(seriais)} kit(s) em {empresa}...")
+
+        def worker():
+            try:
+                resumo = executar_starlink(
+                    dados,
+                    log=lambda m, t=None: self.after(0, self._log, m, t),
+                    dry_run=dry_run,
+                    progresso=lambda f, t: self.after(
+                        0, lambda: self.progresso.configure(value=f, maximum=t)
+                    ),
+                )
+
+                def fim():
+                    if resumo["problemas"]:
+                        messagebox.showwarning(
+                            "Nada foi gravado",
+                            "O cadastro foi barrado:\n\n- "
+                            + "\n- ".join(resumo["problemas"][:6]),
+                        )
+                    elif resumo["dry_run"]:
+                        messagebox.showinfo(
+                            "Simulação",
+                            f"{resumo['total']} Starlink prontos.\n"
+                            "Confira os nomes no log.",
+                        )
+                    elif resumo["falhas"]:
+                        messagebox.showwarning(
+                            "Concluído com problemas",
+                            f"Criados: {resumo['criados']}\n"
+                            f"COM PROBLEMA: {resumo['falhas']}\n\n"
+                            "Veja o log.",
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Finalizado",
+                            f"{resumo['criados']} Starlink cadastrados "
+                            "e conferidos.",
                         )
                 self.after(0, fim)
             except Exception as e:
