@@ -8,6 +8,7 @@ espera de loading.
 Contrato mantido igual ao motor antigo:
     executar_automacao_api(dados, log) com as mesmas chaves de `dados`.
 """
+import re
 from datetime import datetime, timezone
 
 from trackit_api_client import (
@@ -101,11 +102,26 @@ def _resolver(colecao, termos, rotulo, escolher=None, confirmar=False):
     return achados[0]
 
 
+def normalizar_ticket(valor):
+    """
+    Aceita o ticket como ele vem do ClickUp e devolve so o numero.
+
+    'HWS-12312', 'hws-12312', 'HWS 12312', 'hws12312' e '12312' dao todos
+    '12312'. O prefixo e reposto na hora de montar o nome, entao guardar so
+    o numero evita o "HWS-HWS-12312" de quem cola o ticket inteiro.
+    """
+    texto = str(valor or "").strip()
+    return re.sub(r"^hws[\s\-_]*", "", texto, flags=re.IGNORECASE).strip()
+
+
 def montar_nome(dados, numero):
     zendesk = str(dados.get("zendesk") or "").strip()
     sufixo = " | #{}".format(zendesk) if zendesk and zendesk.upper() != "N" else ""
+    # normaliza de novo aqui: e o unico ponto por onde todo nome passa, e
+    # assim nem um chamador distraido consegue produzir "HWS-HWS-...".
     return "{} | {} | HWS-{}{} | {:02d}".format(
-        dados["empresa"], dados["equipamento"], dados["ticket"], sufixo, numero
+        dados["empresa"], dados["equipamento"],
+        normalizar_ticket(dados["ticket"]), sufixo, numero
     )
 
 
