@@ -31,7 +31,11 @@ RELEASES_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 #   True  → força o banner aparecer; o "Atualizar" simula o download
 #            (não substitui o .exe de verdade)
 #   False → comportamento real (consulta o GitHub, baixa e substitui)
-MODO_TESTE_UPDATE = True
+#
+# NUNCA distribuir com True: o app passa a anunciar uma versao 9.9 que nao
+# existe e fica pedindo atualizacao para sempre. O build.ps1 recusa buildar
+# se isto estiver ligado.
+MODO_TESTE_UPDATE = False
 
 
 TUTORIAL_TXT = (

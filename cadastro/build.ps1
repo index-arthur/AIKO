@@ -11,6 +11,15 @@
                             PyInstaller nao os acha sozinho. Sem isso o app
                             compilado abre e morre ao aplicar o tema.
 
+    --collect-all selenium  o Selenium so e importado dentro da funcao de
+                            login pelo navegador, e resolve submodulos em
+                            runtime - a analise estatica do PyInstaller nao
+                            os alcanca. Sem isso, conectar num cliente que
+                            usa SSO (CBM) falhava com "No module named
+                            selenium.webdriver.edge.webdriver". Nos clientes
+                            de formulario o erro nunca aparecia, porque esse
+                            caminho nao roda.
+
     onedir (nao onefile)    o onefile se descompacta em %TEMP% e cria um
                             processo filho a cada abertura - passo bloqueado
                             pelo antivirus corporativo, com a mensagem
@@ -40,6 +49,17 @@ if ($noCodigo -ne $Versao) {
     throw "VERSION do arquivo ($Versao) != VERSION do main.py ($noCodigo). Alinhe os dois."
 }
 
+# O modo de teste do updater ligado faz o app anunciar uma versao 9.9 que nao
+# existe e pedir atualizacao para sempre. Ja foi distribuido assim uma vez -
+# o toggle estava ligado na copia de trabalho e entrou no build sem ninguem
+# perceber. Agora o build recusa.
+$modoTeste = (Select-String -Path (Join-Path $raiz "main.py") `
+              -Pattern '^MODO_TESTE_UPDATE\s*=\s*(\w+)').Matches[0].Groups[1].Value
+if ($modoTeste -ne "False") {
+    throw "MODO_TESTE_UPDATE esta $modoTeste no main.py. Ponha False antes de gerar o instalador."
+}
+Write-Host "MODO_TESTE_UPDATE: False (ok)" -ForegroundColor DarkGray
+
 $dist = Join-Path $raiz "_build\dist"
 $work = Join-Path $raiz "_build\work"
 
@@ -47,6 +67,7 @@ Write-Host "`n[1/2] Empacotando com PyInstaller..." -ForegroundColor Cyan
 python -m PyInstaller --noconfirm --windowed `
     --name "CadastroBordo" `
     --collect-data sv_ttk `
+    --collect-all selenium `
     --hidden-import motor_api `
     --hidden-import motor_vinculo `
     --hidden-import motor_starlink `
