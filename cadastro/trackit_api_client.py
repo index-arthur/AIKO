@@ -22,6 +22,8 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from urllib.parse import urlparse
+
 import requests
 
 
@@ -57,7 +59,18 @@ class TrackitClient:
         if "text/html" not in r.headers.get("content-type", ""):
             return
         corpo = r.text[:4000]
-        if 'id="formLogin"' in corpo or 'name="UserName"' in corpo:
+        # Sessao expirada aparece de duas formas: o formulario ASP.NET nos
+        # tenants antigos, ou a tela do Keycloak nos que usam SSO. Sem o
+        # segundo caso o erro sairia como "assinatura errada", mandando
+        # procurar bug onde so falta relogar.
+        host = urlparse(r.url).netloc.lower()
+        if (
+            'id="formLogin"' in corpo
+            or 'name="UserName"' in corpo
+            or not host.endswith("trackit.host")
+            or "openid-connect" in r.url
+            or "kc-form" in corpo
+        ):
             raise RuntimeError("Sessao expirada/invalida - refaca o login.")
         raise RuntimeError(
             "Endpoint respondeu HTML ({} {}). Provavel assinatura errada "
@@ -168,6 +181,30 @@ def salvar_sessao(empresa, cookies, user_agent, log=print):
     log("Sessao salva (reutilizada ate expirar).")
 
 
+def tipo_de_login(empresa, timeout=25):
+    """
+    Descobre como o tenant autentica. Devolve "formulario" ou "sso".
+
+    Nem todo TracKit tem o formulario ASP.NET do /legacy/Login. Alguns
+    clientes (CBM, por exemplo) redirecionam para o Keycloak em
+    sso.aiko.digital, onde se entra pelos botoes "Entrar com email da
+    AIKO/CBM". Nesses nao ha usuario e senha para postar - so o navegador
+    completa o fluxo OIDC.
+    """
+    base = "https://{}.br.trackit.host/legacy/".format(empresa.lower())
+    try:
+        r = requests.get(base + "Login", timeout=timeout, allow_redirects=True)
+    except requests.RequestException:
+        return "formulario"  # na duvida, tenta o caminho barato primeiro
+
+    host_final = urlparse(r.url).netloc.lower()
+    if not host_final.endswith("trackit.host"):
+        return "sso"
+    if "__RequestVerificationToken" not in r.text:
+        return "sso"
+    return "formulario"
+
+
 def login_por_formulario(empresa, usuario, senha):
     """
     Login direto por HTTP, sem abrir navegador.
@@ -236,6 +273,12 @@ def obter_sessao(
             return s
 
     if usuario and senha:
+        if tipo_de_login(empresa) == "sso":
+            log("Este cliente entra por SSO (Keycloak), nao por usuario e "
+                "senha. Vou abrir o navegador - use o botao 'Entrar com "
+                "email da AIKO'.")
+            return login_e_pegar_cookies(empresa, espera_max)
+
         log("Autenticando como {}...".format(usuario))
         s = login_por_formulario(empresa, usuario, senha)
         try:
