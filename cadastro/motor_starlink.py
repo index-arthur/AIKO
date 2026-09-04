@@ -19,14 +19,7 @@ Prefixo: SM = Starlink Mini, SV = Starlink V4.
 Por isso aqui o payload e montado explicitamente, e nao clonado de um molde
 como no cadastro comum: a receita e conhecida e igual para todo kit.
 """
-from datetime import datetime, timezone
-
-from trackit_api_client import (
-    TrackitClient,
-    descobrir_molde_associacao,
-    montar_associacao,
-    obter_sessao,
-)
+from trackit_api_client import TrackitClient, obter_sessao, valor_por_chave
 
 TIPO_GLOBALSTAR = 3
 MODELO = "Starlink"
@@ -92,12 +85,24 @@ def planejar(equipamentos, mdts, seriais, prefixo):
     return planos, problemas
 
 
-def _payload_equipamento(nome, modelo_id):
-    """A receita do Starlink, igual nos 41 kits existentes."""
+def _payload_equipamento(nome, modelo_id, grupo_id):
+    """
+    A receita do Starlink, copiada campo a campo de um kit ja gravado.
+
+    Duas coisas que o SaveEquipment nao perdoa, ambas descobertas pelo corpo
+    da resposta 500 (que traz o motivo em "detail"):
+
+    - equipmentGroupId e OBRIGATORIO na validacao, mesmo o endpoint gravando
+      "O Grupo de Equipamento e Obrigatorio" se vier 0. E enviar o grupo
+      real aqui JA CRIA a associacao - nao chamar
+      EquipmentGroupAssociation/Save depois, sob pena de duplicar.
+    - networkProfileId nao deve ser enviado. Starlink nao usa perfil e a
+      chave nem existe nos registros gravados; mandar null quebra o binder.
+    """
     return {
         "name": nome,
         "equipmentModelId": modelo_id,
-        "networkProfileId": None,
+        "equipmentGroupId": grupo_id,
         "canCreateTask": False,
         "forceAssignment": False,
         "canPerformQuickMaintenance": False,
@@ -174,23 +179,21 @@ def executar_starlink(dados, log, dry_run=False, progresso=None):
         return dict(criados=0, falhas=0, total=len(planos),
                     dry_run=True, problemas=[])
 
-    molde_assoc = descobrir_molde_associacao(cli)
-    inicio = (datetime.now(timezone.utc).replace(microsecond=0)
-              .isoformat().replace("+00:00", "Z"))
-
     criados = falhas = 0
     for pos, p in enumerate(planos, start=1):
         etiqueta = "{}/{}".format(pos, len(planos))
         try:
             r = cli.salvar_equipamento(
-                _payload_equipamento(p["nome"], modelo["id"]))
+                _payload_equipamento(p["nome"], modelo["id"], grupo["id"]))
             eq_id = r.get("id") if r else None
             if not eq_id:
                 raise RuntimeError("equipamento criado sem id na resposta")
 
-            # grupo e chamada separada: SaveEquipment ignora equipmentGroupId
-            cli.salvar_associacao(
-                montar_associacao(molde_assoc, eq_id, grupo["id"], inicio))
+            # O SaveEquipment ja cria a associacao de grupo a partir do
+            # equipmentGroupId enviado - ele nao ignora o campo, apenas zera
+            # a copia guardada no proprio equipamento. Chamar
+            # EquipmentGroupAssociation/Save aqui criaria uma SEGUNDA
+            # associacao para o mesmo grupo.
 
             cli.salvar_mdt({
                 "deviceID": p["serial"],
@@ -231,6 +234,13 @@ def _conferir(cli, eq_id, plano, modelo_id):
         if eq.get("equipmentModelId") != modelo_id:
             problemas.append("modelo: pedi {}, gravou {}".format(
                 modelo_id, eq.get("equipmentModelId")))
+
+        grupos = [valor_por_chave(a, "equipmentGroupID", "equipmentGroupId")
+                  for a in cli.associacoes(eq_id)]
+        if len(grupos) != 1:
+            problemas.append(
+                "grupo: esperava 1 associacao, achei {} {}".format(
+                    len(grupos), grupos))
 
         mdts = cli._get("Forms/MobileDataTerminal/GetAllMobileDataTerminal")
         dev = next((m for m in mdts

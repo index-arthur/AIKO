@@ -11,13 +11,7 @@ Contrato mantido igual ao motor antigo:
 import re
 from datetime import datetime, timezone
 
-from trackit_api_client import (
-    TrackitClient,
-    descobrir_molde_associacao,
-    montar_associacao,
-    obter_sessao,
-    valor_por_chave,
-)
+from trackit_api_client import TrackitClient, obter_sessao, valor_por_chave
 
 
 def _resolver(colecao, termos, rotulo, escolher=None, confirmar=False):
@@ -181,10 +175,6 @@ def executar_automacao_api(
     for campo in ("id", "equipmentModel", "plate", "capacity"):
         molde.pop(campo, None)
 
-    molde_assoc = descobrir_molde_associacao(cli)
-    if molde_assoc is None:
-        log("[aviso] sem associacao de molde neste tenant - usando formato minimo.")
-
     inicio_iso = (
         datetime.now(timezone.utc)
         .replace(microsecond=0)
@@ -232,10 +222,12 @@ def executar_automacao_api(
             if not novo_id:
                 raise RuntimeError("resposta sem id")
 
-            # SaveEquipment ignora equipmentGroupId: o grupo e um 2o passo
-            cli.salvar_associacao(
-                montar_associacao(molde_assoc, novo_id, grupo["id"], inicio_iso)
-            )
+            # O grupo NAO precisa de uma segunda chamada. O SaveEquipment
+            # consome o equipmentGroupId enviado e cria a associacao sozinho;
+            # o que ele zera e so a copia do campo dentro do equipamento -
+            # foi isso que me levou a concluir errado que ele "ignorava" o
+            # campo. Ate a v6.3 chamavamos EquipmentGroupAssociation/Save
+            # aqui, e todo equipamento nascia com a associacao DUPLICADA.
 
             problemas = _conferir(cli, novo_id, payload, grupo["id"])
             if problemas:
@@ -290,6 +282,13 @@ def _conferir(cli, novo_id, payload, group_id):
         if group_id not in grupos:
             problemas.append(
                 "grupo: pedi {}, gravou {}".format(group_id, grupos or "(nenhum)")
+            )
+        elif len(grupos) != 1:
+            # "o grupo certo esta la" nao basta: a checagem antiga passava
+            # com duas associacoes iguais e a duplicata correu solta por
+            # varias versoes.
+            problemas.append(
+                "grupo duplicado: {} associacoes {}".format(len(grupos), grupos)
             )
     except Exception as e:
         problemas.append("nao consegui verificar: {}".format(e))
