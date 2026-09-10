@@ -23,7 +23,7 @@ from motor_vinculo import executar_vinculacao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.4"
+VERSION = "6.5"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -82,16 +82,19 @@ TUTORIAL_TXT = (
     "(ex: HWS-6848) e cole os seriais, um por linha.\n"
     "\n"
     "O pareamento é POR POSIÇÃO: o 1º serial vai para o equipamento 01,\n"
-    "o 2º para o 02, e assim por diante. Por isso as contagens precisam\n"
-    "bater — se não baterem, ele para e não grava nada.\n"
+    "o 2º para o 02, e assim por diante.\n"
+    "\n"
+    "Não precisa vincular o lote inteiro de uma vez. Cole 3 seriais de um\n"
+    "ticket de 10 e ele usa os equipamentos 01 a 03; depois cole os 7\n"
+    "restantes e ele continua do 04, porque pula quem já tem device.\n"
+    "Só recusa se sobrarem seriais sem equipamento livre.\n"
     "\n"
     "Device que ainda não existe no TracKit é CADASTRADO e vinculado no\n"
     "mesmo passo — a simulação marca esses com [NOVO].\n"
     "\n"
     "Barra antes de gravar quando: o serial já está vinculado a outro\n"
     "equipamento, está repetido na sua lista, está cadastrado em\n"
-    "duplicidade no TracKit, o equipamento já tem device, ou as\n"
-    "contagens não batem.\n"
+    "duplicidade no TracKit, ou sobram seriais sem equipamento livre.\n"
     "\n"
     "IMPORTANTE: Simular nunca grava. Confira o de-para no log e só\n"
     "então clique em Vincular. Como device inexistente vira cadastro\n"

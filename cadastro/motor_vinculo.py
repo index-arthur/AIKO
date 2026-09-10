@@ -128,32 +128,40 @@ def montar_pares(equipamentos, mdts, filtro, seriais, criar_faltantes=True):
             "Serial ja vinculado: {}".format("; ".join(ja_vinculados[:10]))
         )
 
-    # 5. equipamento que ja tem bordo
+    # 5. equipamento que ja tem bordo NAO e erro: e onde o lote parou.
+    #    Da para vincular 3 de 10 hoje e os 7 restantes depois - os ja
+    #    atendidos saem da fila e os seriais novos continuam do 04 em
+    #    diante, sem ninguem precisar controlar em que numero parou.
     ocupados = {m.get("equipmentID") for m in mdts if m.get("equipmentID")}
-    eq_ocupados = [
-        (e.get("name") or "").strip()
-        for e in equipamentos_alvo
-        if e["id"] in ocupados
-    ]
-    if eq_ocupados:
+    ja_feitos = [e for e in equipamentos_alvo if e["id"] in ocupados]
+    livres = [e for e in equipamentos_alvo if e["id"] not in ocupados]
+
+    if not livres:
         problemas.append(
-            "Equipamento ja tem bordo: {}".format("; ".join(eq_ocupados[:10]))
+            "Todos os {} equipamentos de '{}' ja tem device.".format(
+                len(equipamentos_alvo), filtro
+            )
         )
 
-    # 6. contagens diferentes - o pareamento posicional sairia torto
-    if len(seriais) != len(equipamentos_alvo):
+    # 6. sobra serial - ai sim o pareamento sairia torto
+    if len(seriais) > len(livres):
         problemas.append(
-            "{} serial(is) para {} equipamento(s) que casam com '{}'. "
-            "O pareamento e por posicao, entao as contagens precisam bater."
-            .format(len(seriais), len(equipamentos_alvo), filtro)
+            "{} serial(is) para {} equipamento(s) livre(s) em '{}' "
+            "({} ja tem device). Sobrariam {} serial(is) sem destino."
+            .format(len(seriais), len(livres), filtro, len(ja_feitos),
+                    len(seriais) - len(livres))
         )
 
     # o serial vai junto no par: quando o bordo nao existe ainda, e dele que
     # sai o deviceID do cadastro novo (com os apostrofos, exatamente como
     # veio - o padrao da casa e esse e nao cabe a mim normalizar)
+    #
+    # zip contra os LIVRES: e o que faz o lote parcial continuar de onde
+    # parou. Com 3 seriais e 10 equipamentos, pega 01-03; na proxima vez,
+    # esses ja terao device e os 7 novos comecam no 04.
     pares = [
         (indice.get(_chave(s)), e, s)
-        for s, e in zip(seriais, equipamentos_alvo)
+        for s, e in zip(seriais, livres)
     ]
     return pares, problemas
 
@@ -190,6 +198,21 @@ def executar_vinculacao(dados, log, dry_run=False, progresso=None):
             log("  - " + p, "erro")
         return dict(vinculados=0, criados=0, falhas=0, total=len(pares),
                     dry_run=dry_run, problemas=problemas)
+
+    # Situacao do lote antes do de-para: sem isso, quem vincula parcial nao
+    # tem como saber quantos ainda faltam.
+    alvo_lote = [e for e in equipamentos
+                 if (dados.get("filtro") or "").strip().lower()
+                 in (e.get("name") or "").lower()]
+    ocupados = {m.get("equipmentID") for m in mdts if m.get("equipmentID")}
+    ja_tinham = sum(1 for e in alvo_lote if e["id"] in ocupados)
+    restam = len(alvo_lote) - ja_tinham - len(pares)
+
+    log("Lote '{}': {} equipamento(s), {} ja com device.".format(
+        dados.get("filtro"), len(alvo_lote), ja_tinham))
+    if restam > 0:
+        log("Vinculando {} agora; sobram {} para depois.".format(
+            len(pares), restam), "aviso")
 
     novos = sum(1 for mdt, _, _ in pares if mdt is None)
     log("De-para ({} vinculo(s), {} bordo(s) a criar):".format(
