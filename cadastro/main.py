@@ -639,20 +639,66 @@ class CadastroHUD(tk.Tk):
         bloco_dev.grid(row=0, column=0, sticky="ew")
         bloco_dev.columnconfigure(1, weight=1)
 
+        # Busca: o estoque nao decora deviceID. Digitando os ultimos
+        # caracteres (ou o nome do equipamento) ele acha o bordo e copia o
+        # texto pronto, em vez de transcrever 16 caracteres a mao.
+        self.bordos = []
+
+        ttk.Label(bloco_dev, text="Procurar").grid(
+            row=0, column=0, sticky="w", pady=(0, 2))
+        self.vars["busca_dev"] = tk.StringVar()
+        ent_busca = ttk.Entry(bloco_dev, textvariable=self.vars["busca_dev"])
+        ent_busca.grid(row=0, column=1, sticky="ew", pady=(0, 2), padx=(12, 0))
+        self.vars["busca_dev"].trace_add("write",
+                                         lambda *_: self._buscar_bordo())
+
+        ttk.Label(
+            bloco_dev,
+            text="ultimos caracteres do device (ex: f861) ou nome do equipamento",
+            style="Sub.TLabel",
+        ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(0, 8))
+
+        self.tabela_dev = ttk.Treeview(
+            bloco_dev, columns=("device", "equip"), show="headings", height=6)
+        self.tabela_dev.heading("device", text="DeviceID")
+        self.tabela_dev.heading("equip", text="Equipamento atual")
+        self.tabela_dev.column("device", width=190, stretch=False)
+        self.tabela_dev.column("equip", width=320)
+        self.tabela_dev.grid(row=2, column=1, sticky="ew", padx=(12, 0))
+        self.tabela_dev.bind("<Double-1>",
+                             lambda e: self._dev_para_lista())
+
+        acoes_dev = ttk.Frame(bloco_dev)
+        acoes_dev.grid(row=3, column=1, sticky="ew", padx=(12, 0), pady=(8, 0))
+        ttk.Button(acoes_dev, text="Copiar deviceID",
+                   command=lambda: self._copiar_dev("device")).pack(side="left")
+        ttk.Button(acoes_dev, text="Copiar nome da Reserva",
+                   command=lambda: self._copiar_dev("reserva")).pack(
+                       side="left", padx=(6, 0))
+        ttk.Button(acoes_dev, text="Adicionar a lista",
+                   command=self._dev_para_lista).pack(side="left", padx=(6, 0))
+
+        self.lbl_busca_dev = ttk.Label(bloco_dev, text="", style="Sub.TLabel")
+        self.lbl_busca_dev.grid(row=4, column=1, sticky="w", padx=(12, 0),
+                                pady=(6, 0))
+
+        ttk.Separator(bloco_dev, orient="horizontal").grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(12, 12))
+
         ttk.Label(bloco_dev, text="DeviceID dos bordos").grid(
-            row=0, column=0, sticky="nw", pady=(0, 2))
+            row=6, column=0, sticky="nw", pady=(0, 2))
         self.txt_devolucao = tk.Text(
-            bloco_dev, height=8, wrap="none", font=("Consolas", 9),
+            bloco_dev, height=6, wrap="none", font=("Consolas", 9),
             bg=self.SURFACE, fg=self.TEXT, insertbackground=self.TEXT,
             selectbackground=self.ACCENT, borderwidth=0,
             highlightthickness=1, relief="flat",
         )
-        self.txt_devolucao.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+        self.txt_devolucao.grid(row=6, column=1, sticky="ew", padx=(12, 0))
         self.txt_devolucao.bind("<KeyRelease>",
                                 lambda e: self._contar_devolucao())
 
         self.lbl_devolucao = ttk.Label(bloco_dev, text="", style="Sub.TLabel")
-        self.lbl_devolucao.grid(row=1, column=1, sticky="w", padx=(12, 0),
+        self.lbl_devolucao.grid(row=7, column=1, sticky="w", padx=(12, 0),
                                 pady=(6, 0))
 
         ttk.Label(
@@ -665,7 +711,7 @@ class CadastroHUD(tk.Tk):
                  "e o lote inteiro para - devolucao e sempre de bordo que ja\n"
                  "rodou em campo, entao isso e erro de digitacao.",
             style="Sub.TLabel", justify="left",
-        ).grid(row=2, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
+        ).grid(row=8, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
 
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
@@ -814,6 +860,78 @@ class CadastroHUD(tk.Tk):
                 self.after(0, restaurar)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ----- Devolucao: busca -----
+    LIMITE_BUSCA = 50
+
+    def _buscar_bordo(self, _evt=None):
+        termo = self.vars["busca_dev"].get().strip().lower()
+        self.tabela_dev.delete(*self.tabela_dev.get_children())
+
+        if not self.bordos:
+            self.lbl_busca_dev.configure(
+                text="conecte para carregar os bordos do cliente")
+            return
+        if len(termo) < 2:
+            self.lbl_busca_dev.configure(
+                text="{} bordos carregados - digite ao menos 2 "
+                     "caracteres".format(len(self.bordos)))
+            return
+
+        achados = [b for b in self.bordos
+                   if termo in b["device"].lower()
+                   or termo in b["equipamento"].lower()]
+        for b in achados[: self.LIMITE_BUSCA]:
+            self.tabela_dev.insert(
+                "", "end", values=(b["device"],
+                                   b["equipamento"] or "(sem equipamento)"))
+
+        if not achados:
+            self.lbl_busca_dev.configure(text="nada encontrado para '{}'"
+                                         .format(termo))
+        elif len(achados) > self.LIMITE_BUSCA:
+            self.lbl_busca_dev.configure(
+                text="{} encontrados - mostrando os {} primeiros, "
+                     "refine a busca".format(len(achados), self.LIMITE_BUSCA))
+        else:
+            self.lbl_busca_dev.configure(
+                text="{} encontrado(s)".format(len(achados)))
+
+    def _dev_selecionado(self):
+        sel = self.tabela_dev.selection()
+        if not sel:
+            messagebox.showinfo("Selecione", "Clique em um bordo da lista.")
+            return None
+        return self.tabela_dev.item(sel[0], "values")
+
+    def _copiar_dev(self, o_que):
+        vals = self._dev_selecionado()
+        if not vals:
+            return
+        device = vals[0]
+        # "Reserva - <deviceID>" e o nome que o estoque monta a mao no
+        # equipamento novo; copiar pronto e o ponto todo desta aba.
+        texto = device if o_que == "device" else "Reserva - {}".format(device)
+        self.clipboard_clear()
+        self.clipboard_append(texto)
+        self.update()
+        self.lbl_busca_dev.configure(text="copiado: {}".format(texto))
+
+    def _dev_para_lista(self):
+        vals = self._dev_selecionado()
+        if not vals:
+            return
+        device = vals[0]
+        if device in self._devices_devolucao():
+            self.lbl_busca_dev.configure(
+                text="{} ja esta na lista".format(device))
+            return
+        atual = self.txt_devolucao.get("1.0", "end").rstrip()
+        self.txt_devolucao.delete("1.0", "end")
+        self.txt_devolucao.insert(
+            "1.0", (atual + "\n" if atual else "") + device + "\n")
+        self._contar_devolucao()
+        self.lbl_busca_dev.configure(text="{} adicionado a lista".format(device))
 
     # ----- Devolucao -----
     def _devices_devolucao(self):
@@ -1062,7 +1180,20 @@ class CadastroHUD(tk.Tk):
                     "grupo": cli.grupos(),
                     "perfil": cli.perfis_rede(),
                 }
-                self.after(0, lambda: self._conectado(empresa, listas))
+                # Alimenta a busca da aba Devolucao. Vem junto do Conectar
+                # porque sao duas leituras baratas e o estoque nao ia
+                # entender um segundo botao "carregar" so para pesquisar.
+                nomes = {e["id"]: (e.get("name") or "").strip()
+                         for e in cli.equipamentos()}
+                bordos = sorted(
+                    ({"device": (m.get("deviceID") or "").strip(),
+                      "equipamento": nomes.get(m.get("equipmentID"), "")}
+                     for m in cli._get(
+                         "Forms/MobileDataTerminal/GetAllMobileDataTerminal")
+                     if (m.get("deviceID") or "").strip()),
+                    key=lambda b: b["device"].lower(),
+                )
+                self.after(0, lambda: self._conectado(empresa, listas, bordos))
             except Exception as e:
                 erro = str(e)
 
@@ -1078,14 +1209,16 @@ class CadastroHUD(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _conectado(self, empresa, listas):
+    def _conectado(self, empresa, listas, bordos=None):
         self.listas = listas
+        self.bordos = bordos or []
         self.lbl_conexao.configure(
             text="conectado a " + empresa.upper(), style="Ok.TLabel")
         self._log(
-            "Conectado: {} modelos, {} grupos, {} perfis.".format(
+            "Conectado: {} modelos, {} grupos, {} perfis, {} bordos.".format(
                 len(listas["modelo"]), len(listas["grupo"]),
-                len(listas["perfil"])), "ok")
+                len(listas["perfil"]), len(self.bordos)), "ok")
+        self._buscar_bordo()
         for chave, botao in self.btn_sel.items():
             botao.configure(state="normal")
             if self.selecao[chave] is None:
