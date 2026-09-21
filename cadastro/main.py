@@ -20,10 +20,11 @@ from motor_api import (
 from motor_starlink import executar_starlink
 from motor_starlink import montar_nome as montar_nome_sl
 from motor_vinculo import executar_vinculacao
+from motor_devolucao import executar_devolucao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.5"
+VERSION = "6.6"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -501,10 +502,12 @@ class CadastroHUD(tk.Tk):
         aba_cad = ttk.Frame(self.abas, padding=(12, 12))
         aba_vin = ttk.Frame(self.abas, padding=(12, 12))
         aba_sl = ttk.Frame(self.abas, padding=(12, 12))
+        aba_dev = ttk.Frame(self.abas, padding=(12, 12))
         self.abas.add(aba_cad, text="  Cadastro de Bordo  ")
         self.abas.add(aba_vin, text="  Vinculacao  ")
         self.abas.add(aba_sl, text="  Starlink  ")
-        for _f in (aba_cad, aba_vin, aba_sl):
+        self.abas.add(aba_dev, text="  Devolucao  ")
+        for _f in (aba_cad, aba_vin, aba_sl, aba_dev):
             _f.columnconfigure(0, weight=1)
 
         # ---------- Aba 1: cadastro ----------
@@ -629,6 +632,41 @@ class CadastroHUD(tk.Tk):
             style="Sub.TLabel", justify="left",
         ).grid(row=3, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
 
+        # ---------- Aba 4: devolucao ----------
+        bloco_dev = ttk.Labelframe(
+            aba_dev, text=" Desvincular bordos devolvidos ",
+            padding=(14, 10, 14, 12))
+        bloco_dev.grid(row=0, column=0, sticky="ew")
+        bloco_dev.columnconfigure(1, weight=1)
+
+        ttk.Label(bloco_dev, text="DeviceID dos bordos").grid(
+            row=0, column=0, sticky="nw", pady=(0, 2))
+        self.txt_devolucao = tk.Text(
+            bloco_dev, height=8, wrap="none", font=("Consolas", 9),
+            bg=self.SURFACE, fg=self.TEXT, insertbackground=self.TEXT,
+            selectbackground=self.ACCENT, borderwidth=0,
+            highlightthickness=1, relief="flat",
+        )
+        self.txt_devolucao.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+        self.txt_devolucao.bind("<KeyRelease>",
+                                lambda e: self._contar_devolucao())
+
+        self.lbl_devolucao = ttk.Label(bloco_dev, text="", style="Sub.TLabel")
+        self.lbl_devolucao.grid(row=1, column=1, sticky="w", padx=(12, 0),
+                                pady=(6, 0))
+
+        ttk.Label(
+            bloco_dev,
+            text="Um deviceID por linha - a ordem nao importa. Cada um sai do\n"
+                 "equipamento onde estiver e fica sem associacao, do mesmo\n"
+                 "jeito que a tela do TracKit faz.\n\n"
+                 "O cadastro do bordo NAO e apagado: ele continua na base para\n"
+                 "ser vinculado de novo. Se o device nao existir, nada e criado\n"
+                 "e o lote inteiro para - devolucao e sempre de bordo que ja\n"
+                 "rodou em campo, entao isso e erro de digitacao.",
+            style="Sub.TLabel", justify="left",
+        ).grid(row=2, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
+
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
         log_frame.grid(row=2, column=0, sticky="nsew")
@@ -658,17 +696,20 @@ class CadastroHUD(tk.Tk):
             return 0
 
     def _ao_trocar_aba(self, _evt=None):
-        rotulos = {0: "Cadastrar", 1: "Vincular", 2: "Cadastrar Starlink"}
+        rotulos = {0: "Cadastrar", 1: "Vincular", 2: "Cadastrar Starlink",
+                   3: "Desvincular"}
         self.btn_iniciar.configure(
             text=rotulos.get(self._aba_atual(), "Cadastrar"))
 
     def _on_acao(self, dry_run=False):
-        """O botao principal serve as tres abas."""
+        """O botao principal serve as quatro abas."""
         aba = self._aba_atual()
         if aba == 1:
             self._on_vincular(dry_run=dry_run)
         elif aba == 2:
             self._on_starlink(dry_run=dry_run)
+        elif aba == 3:
+            self._on_devolucao(dry_run=dry_run)
         else:
             self._on_iniciar(dry_run=dry_run)
 
@@ -761,6 +802,107 @@ class CadastroHUD(tk.Tk):
                             f"{resumo['vinculados']} bordo(s) vinculados "
                             f"e conferidos.\n"
                             f"{resumo.get('criados', 0)} foram criados agora.",
+                        )
+                self.after(0, fim)
+            except Exception as e:
+                erro = str(e)
+                self.after(0, lambda: messagebox.showerror("Erro", erro))
+            finally:
+                def restaurar():
+                    self.btn_iniciar.configure(state="normal")
+                    self.btn_simular.configure(state="normal")
+                self.after(0, restaurar)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ----- Devolucao -----
+    def _devices_devolucao(self):
+        bruto = self.txt_devolucao.get("1.0", "end")
+        return [ln.strip() for ln in bruto.splitlines() if ln.strip()]
+
+    def _contar_devolucao(self):
+        n = len(self._devices_devolucao())
+        self.lbl_devolucao.configure(
+            text="{} device(s) na lista".format(n) if n else "")
+
+    def _on_devolucao(self, dry_run=False):
+        devices = self._devices_devolucao()
+        empresa = self.vars["empresa"].get().strip().upper()
+
+        if not empresa:
+            messagebox.showerror("Falta a empresa", "Informe a sigla da empresa.")
+            return
+        if not devices:
+            messagebox.showerror("Falta a lista",
+                                 "Cole os deviceID, um por linha.")
+            return
+
+        if not dry_run and not messagebox.askyesno(
+            "Confirmar devolução",
+            f"Isto vai DESVINCULAR {len(devices)} bordo(s) em {empresa} — "
+            f"de verdade, na produção.\n\n"
+            "Os equipamentos onde eles estão ficam sem bordo e param de\n"
+            "reportar posição. O cadastro do bordo não é apagado.\n\n"
+            "Continuar?",
+        ):
+            return
+
+        prefixo_usr = self.vars["usuario"].get().strip()
+        if prefixo_usr.lower().endswith("@aiko.digital"):
+            prefixo_usr = prefixo_usr[: -len("@aiko.digital")]
+
+        dados = dict(
+            empresa=empresa,
+            usuario=(prefixo_usr + "@aiko.digital") if prefixo_usr else None,
+            senha=self.vars["senha"].get() or None,
+            seriais=devices,
+        )
+
+        for b in (self.btn_iniciar, self.btn_simular):
+            b.configure(state="disabled")
+        self.progresso["value"] = 0
+        self.progresso["maximum"] = max(len(devices), 1)
+        self._log(("[SIMULAÇÃO] " if dry_run else "")
+                  + f"Devolução: {len(devices)} bordo(s) em {empresa}...")
+
+        def worker():
+            try:
+                resumo = executar_devolucao(
+                    dados,
+                    log=lambda m, t=None: self.after(0, self._log, m, t),
+                    dry_run=dry_run,
+                    progresso=lambda f, t: self.after(
+                        0, lambda: self.progresso.configure(value=f, maximum=t)
+                    ),
+                )
+
+                def fim():
+                    if resumo["problemas"]:
+                        messagebox.showwarning(
+                            "Nada foi gravado",
+                            "A devolução foi barrada:\n\n- "
+                            + "\n- ".join(resumo["problemas"][:6]),
+                        )
+                    elif resumo["dry_run"]:
+                        messagebox.showinfo(
+                            "Simulação",
+                            f"{resumo['total']} bordo(s) seriam desvinculados.\n"
+                            f"{resumo['ja_soltos']} já estão sem equipamento.\n\n"
+                            "Confira no log de onde cada um sai.",
+                        )
+                    elif resumo["falhas"]:
+                        messagebox.showwarning(
+                            "Concluído com problemas",
+                            f"Desvinculados: {resumo['desvinculados']}\n"
+                            f"COM PROBLEMA: {resumo['falhas']}\n\n"
+                            "Veja o log.",
+                        )
+                    else:
+                        messagebox.showinfo(
+                            "Finalizado",
+                            f"{resumo['desvinculados']} bordo(s) desvinculados "
+                            f"e conferidos.\n"
+                            f"{resumo['ja_soltos']} já estavam soltos.",
                         )
                 self.after(0, fim)
             except Exception as e:
