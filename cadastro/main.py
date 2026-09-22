@@ -27,7 +27,7 @@ from motor_devolucao import executar_devolucao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.7"
+VERSION = "6.8"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -623,9 +623,19 @@ class CadastroHUD(tk.Tk):
         campo(lote, 3, "Parou no bordo", "parou", default="0")
         campo(lote, 4, "Qtd. total de bordos", "limite")
 
-        self.lbl_previa = ttk.Label(lote, text="", style="Sub.TLabel")
-        self.lbl_previa.grid(row=5, column=1, sticky="w", padx=(12, 0))
-        for k in ("empresa", "equipamento", "ticket", "zendesk"):
+        linha_previa = ttk.Frame(lote)
+        linha_previa.grid(row=5, column=1, sticky="ew", padx=(12, 0))
+        linha_previa.columnconfigure(0, weight=1)
+        self.lbl_previa = ttk.Label(linha_previa, text="", style="Sub.TLabel")
+        self.lbl_previa.grid(row=0, column=0, sticky="w")
+        ttk.Button(linha_previa, text="Copiar nomes", width=14,
+                   command=self._copiar_nomes).grid(row=0, column=1,
+                                                    sticky="e", padx=(8, 0))
+
+        # A quantidade tambem mexe na previa: e ela que diz quantos nomes o
+        # botao copia.
+        for k in ("empresa", "equipamento", "ticket", "zendesk",
+                  "parou", "limite"):
             self.vars[k].trace_add("write", lambda *_: self._atualizar_previa())
 
         # ---------- Aba 2: vinculacao ----------
@@ -1255,9 +1265,63 @@ class CadastroHUD(tk.Tk):
                 "zendesk": self.vars["zendesk"].get().strip(),
                 "prefixo_ticket": self.vars["prefixo_ticket"].get(),
             }
-            self.lbl_previa.configure(text="Ficara: " + montar_nome(dados, 1))
+            primeiro = self._faixa_do_lote()[0]
+            texto = "Ficara: " + montar_nome(dados, primeiro)
+            quantos = len(self._nomes_do_lote())
+            if quantos > 1:
+                texto += "   ({} nomes)".format(quantos)
+            self.lbl_previa.configure(text=texto)
         except Exception:
             self.lbl_previa.configure(text="")
+
+    def _faixa_do_lote(self):
+        """(primeiro, ultimo) do lote. Sem quantidade valida, so o primeiro."""
+        try:
+            parou = int(self.vars["parou"].get().strip() or "0")
+        except ValueError:
+            parou = 0
+        try:
+            limite = int(self.vars["limite"].get().strip() or "0")
+        except ValueError:
+            limite = 0
+        primeiro = parou + 1
+        return primeiro, max(limite, primeiro)
+
+    def _nomes_do_lote(self):
+        dados = {
+            "empresa": self.vars["empresa"].get().strip().upper(),
+            "equipamento": self.vars["equipamento"].get().strip().upper(),
+            "ticket": self.vars["ticket"].get().strip(),
+            "zendesk": self.vars["zendesk"].get().strip(),
+            "prefixo_ticket": self.vars["prefixo_ticket"].get(),
+        }
+        primeiro, ultimo = self._faixa_do_lote()
+        return [montar_nome(dados, n) for n in range(primeiro, ultimo + 1)]
+
+    def _copiar_nomes(self):
+        """
+        Copia o lote inteiro, um nome por linha - e assim que cai certo na
+        planilha, uma linha por celula. Com a quantidade em branco vai so o
+        nome da previa.
+        """
+        faltando = [rot for chave, rot in (("empresa", "Empresa"),
+                                           ("equipamento", "Equipamento"),
+                                           ("ticket", "Ticket"))
+                    if not self.vars[chave].get().strip()]
+        if faltando:
+            # sem isso o copiar levaria "? | COMODATO | HWS-? | 01" para a
+            # planilha, que e pior do que nao copiar
+            messagebox.showinfo(
+                "Falta preencher",
+                "Preencha antes: " + ", ".join(faltando))
+            return
+
+        nomes = self._nomes_do_lote()
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(nomes))
+        self.update()
+        self._log("Copiado(s) {} nome(s) para a area de transferencia."
+                  .format(len(nomes)))
 
     # ----- Conexao -----
     def _on_conectar(self):
