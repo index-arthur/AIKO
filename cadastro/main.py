@@ -16,6 +16,9 @@ from motor_api import (
     executar_automacao_api,
     montar_nome,
     normalizar_ticket,
+    detectar_prefixo,
+    PREFIXOS_TICKET,
+    PADRAO_PREFIXO,
 )
 from motor_starlink import executar_starlink
 from motor_starlink import montar_nome as montar_nome_sl
@@ -24,7 +27,7 @@ from motor_devolucao import executar_devolucao
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.6"
+VERSION = "6.7"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -277,8 +280,13 @@ class CadastroHUD(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Cadastro de Bordo - Aiko  •  v{VERSION}")
-        self.geometry("700x860")
-        self.minsize(620, 560)
+        # Nunca pedir mais altura do que a tela tem. Em notebook de 768px a
+        # janela de 860 nascia maior que o monitor e o rodape ficava embaixo
+        # da barra de tarefas - o usuario nao via o Log nem conseguia
+        # encolher, porque o minsize tambem era grande demais.
+        self._altura_util = max(480, self.winfo_screenheight() - 90)
+        self.geometry("700x{}".format(min(860, self._altura_util)))
+        self.minsize(620, min(560, self._altura_util))
         try:
             self.iconbitmap("negao.ico")
         except Exception:
@@ -287,12 +295,12 @@ class CadastroHUD(tk.Tk):
         self._aplicar_tema(self._tema_atual)
         self._montar_layout()
 
-        # O minimo vem do que o conteudo realmente precisa. Chutar um valor
-        # deixava o formulario colapsar (o corpo virava 1px e so sobravam os
-        # botoes). O log e o unico que encolhe: por isso entra com pouco e
-        # cresce junto com a janela.
+        # O minimo vem do que o conteudo realmente precisa - mas limitado
+        # pela tela. Antes so o conteudo mandava, e numa tela baixa isso
+        # travava a janela num tamanho que nao cabia no monitor. Hoje o que
+        # nao couber rola dentro do painel, entao apertar e seguro.
         self.update_idletasks()
-        self.minsize(640, min(self.winfo_reqheight(), 920))
+        self.minsize(640, min(self.winfo_reqheight(), 920, self._altura_util))
 
         self.after(200, self._verificar_update_async)
 
@@ -332,7 +340,9 @@ class CadastroHUD(tk.Tk):
             for tag, cor in (("ok", self.OK), ("erro", self.ERRO),
                              ("aviso", self.AVISO), ("info", self.SUBTLE)):
                 self.log.tag_configure(tag, foreground=cor)
-        for _attr in ("txt_seriais", "txt_starlink"):
+        if hasattr(self, "painel"):
+            self.painel.configure(bg=self.BG)
+        for _attr in ("txt_seriais", "txt_starlink", "txt_devolucao"):
             _w = getattr(self, _attr, None)
             if _w is not None:
                 _w.configure(
@@ -450,8 +460,57 @@ class CadastroHUD(tk.Tk):
         corpo.pack(fill="both", expand=True)
         corpo.columnconfigure(0, weight=1)
 
+        # Acesso + abas vao para dentro de um canvas rolavel; o Log fica
+        # FORA dele, preso embaixo. Em notebook de 768px a janela inteira
+        # nao cabia e o Log era o que sumia - justamente onde a automacao
+        # conta o que fez. Agora o que falta espaco rola, e o Log nao sai
+        # da vista.
+        self.painel = tk.Canvas(corpo, highlightthickness=0, borderwidth=0)
+        barra = ttk.Scrollbar(corpo, orient="vertical",
+                              command=self.painel.yview)
+        self.painel.configure(yscrollcommand=barra.set)
+        self.painel.grid(row=0, column=0, sticky="nsew")
+        barra.grid(row=0, column=1, sticky="ns")
+
+        rolavel = ttk.Frame(self.painel)
+        janela = self.painel.create_window((0, 0), window=rolavel, anchor="nw")
+        rolavel.columnconfigure(0, weight=1)
+
+        def _remedir(_evt=None):
+            self.painel.configure(scrollregion=self.painel.bbox("all"))
+            # sem isso o conteudo fica com a largura natural dele e nao
+            # acompanha a janela ao maximizar
+            self.painel.itemconfigure(janela, width=self.painel.winfo_width())
+
+        rolavel.bind("<Configure>", _remedir)
+        self.painel.bind("<Configure>", _remedir)
+
+        def _roda(evt):
+            # No Windows a roda vai para o widget com foco, nao para o que
+            # esta sob o cursor - por isso quem manda aqui e o
+            # winfo_containing. Sem isso, rolar o Log movia o painel.
+            sob = self.winfo_containing(evt.x_root, evt.y_root)
+            w, dentro = sob, False
+            while w is not None:
+                # widget que rola sozinho (Log, tabela de busca) fica com a
+                # roda dele; o painel nao se intromete
+                if getattr(w, "_rola_sozinho", False):
+                    return
+                if w is self.painel:
+                    dentro = True
+                    break
+                w = getattr(w, "master", None)
+            if not dentro:
+                return
+            inicio, fim = self.painel.yview()
+            # so rola quando ha o que rolar
+            if inicio > 0.0 or fim < 1.0:
+                self.painel.yview_scroll(-1 * (evt.delta // 120), "units")
+
+        self.bind_all("<MouseWheel>", _roda)
+
         # ---------- 1. Acesso ----------
-        acesso = ttk.Labelframe(corpo, text=" Acesso ", padding=(14, 10, 14, 12))
+        acesso = ttk.Labelframe(rolavel, text=" Acesso ", padding=(14, 10, 14, 12))
         acesso.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         acesso.columnconfigure(1, weight=1)
 
@@ -495,7 +554,7 @@ class CadastroHUD(tk.Tk):
         self.lbl_conexao.pack(side="left", padx=(12, 0))
 
         # ---------- Abas ----------
-        self.abas = ttk.Notebook(corpo)
+        self.abas = ttk.Notebook(rolavel)
         self.abas.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         self.abas.bind("<<NotebookTabChanged>>", self._ao_trocar_aba)
 
@@ -539,7 +598,27 @@ class CadastroHUD(tk.Tk):
         lote.columnconfigure(1, weight=1)
 
         campo(lote, 0, "Equipamento", "equipamento", default="COMODATO")
-        campo(lote, 1, "Ticket (numero)", "ticket")
+
+        # Origem do chamado: HWS e o ClickUp, SP e o SGI. Fica colado no
+        # campo do ticket porque e a mesma decisao - quem digita o numero
+        # sabe de onde ele veio.
+        ttk.Label(lote, text="Ticket").grid(row=1, column=0, sticky="w",
+                                            pady=(0, 2))
+        linha_tk = ttk.Frame(lote)
+        linha_tk.grid(row=1, column=1, sticky="ew", pady=(0, 8), padx=(12, 0))
+        linha_tk.columnconfigure(1, weight=1)
+        self.vars["prefixo_ticket"] = tk.StringVar(value=PADRAO_PREFIXO)
+        radios = ttk.Frame(linha_tk)
+        radios.grid(row=0, column=0, sticky="w")
+        for pref in PREFIXOS_TICKET:
+            ttk.Radiobutton(radios, text=pref, value=pref,
+                            variable=self.vars["prefixo_ticket"],
+                            command=self._atualizar_previa).pack(
+                                side="left", padx=(0, 8))
+        self.vars["ticket"] = tk.StringVar()
+        ttk.Entry(linha_tk, textvariable=self.vars["ticket"]).grid(
+            row=0, column=1, sticky="ew", padx=(6, 0))
+
         campo(lote, 2, "Zendesk (opcional)", "zendesk")
         campo(lote, 3, "Parou no bordo", "parou", default="0")
         campo(lote, 4, "Qtd. total de bordos", "limite")
@@ -658,13 +737,23 @@ class CadastroHUD(tk.Tk):
             style="Sub.TLabel",
         ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(0, 8))
 
+        quadro_tab = ttk.Frame(bloco_dev)
+        quadro_tab.grid(row=2, column=1, sticky="ew", padx=(12, 0))
+        quadro_tab.columnconfigure(0, weight=1)
         self.tabela_dev = ttk.Treeview(
-            bloco_dev, columns=("device", "equip"), show="headings", height=6)
+            quadro_tab, columns=("device", "equip"), show="headings", height=6)
         self.tabela_dev.heading("device", text="DeviceID")
         self.tabela_dev.heading("equip", text="Equipamento atual")
         self.tabela_dev.column("device", width=190, stretch=False)
         self.tabela_dev.column("equip", width=320)
-        self.tabela_dev.grid(row=2, column=1, sticky="ew", padx=(12, 0))
+        self.tabela_dev.grid(row=0, column=0, sticky="ew")
+        # mostra 6 linhas mas pode trazer ate LIMITE_BUSCA: sem a barra o
+        # resto seria inalcancavel
+        barra_tab = ttk.Scrollbar(quadro_tab, orient="vertical",
+                                  command=self.tabela_dev.yview)
+        barra_tab.grid(row=0, column=1, sticky="ns")
+        self.tabela_dev.configure(yscrollcommand=barra_tab.set)
+        self.tabela_dev._rola_sozinho = True
         self.tabela_dev.bind("<Double-1>",
                              lambda e: self._dev_para_lista())
 
@@ -715,8 +804,12 @@ class CadastroHUD(tk.Tk):
 
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
-        log_frame.grid(row=2, column=0, sticky="nsew")
-        corpo.rowconfigure(2, weight=1)
+        log_frame.grid(row=1, column=0, columnspan=2, sticky="nsew",
+                       pady=(12, 0))
+        # A area rolavel cede espaco primeiro; o Log tem piso proprio para
+        # nunca ser espremido ate sumir, que era a reclamacao.
+        corpo.rowconfigure(0, weight=3)
+        corpo.rowconfigure(1, weight=2, minsize=130)
         self.log = scrolledtext.ScrolledText(
             log_frame, height=6, font=("Consolas", 9),
             state="disabled", wrap="word", bg=self.SURFACE, fg=self.TEXT,
@@ -728,6 +821,13 @@ class CadastroHUD(tk.Tk):
                          ("aviso", self.AVISO), ("info", self.SUBTLE)):
             self.log.tag_configure(tag, foreground=cor)
 
+
+        # Caixas de texto rolam o proprio conteudo, nao o painel: quem colou
+        # 30 seriais numa caixa de 8 linhas precisa da roda ali dentro.
+        for _attr in ("txt_seriais", "txt_starlink", "txt_devolucao"):
+            _w = getattr(self, _attr, None)
+            if _w is not None:
+                _w._rola_sozinho = True
 
         self._atualizar_previa()
         # Reaplica o tema agora que os widgets nao-ttk existem: na 1a chamada
@@ -1140,12 +1240,20 @@ class CadastroHUD(tk.Tk):
     # ----- Previa do nome, ao vivo -----
     def _atualizar_previa(self):
         try:
+            bruto = self.vars["ticket"].get().strip()
+            # Colou "SP-4471" com o radio no HWS? O radio segue o que foi
+            # colado. Confiar no radio faria um ticket do SGI nascer como
+            # HWS-4471 sem ninguem notar - e a previa mostra a troca.
+            escrito = detectar_prefixo(bruto)
+            if escrito and escrito != self.vars["prefixo_ticket"].get():
+                self.vars["prefixo_ticket"].set(escrito)
             dados = {
                 "empresa": self.vars["empresa"].get().strip().upper() or "?",
                 "equipamento":
                     self.vars["equipamento"].get().strip().upper() or "?",
-                "ticket": self.vars["ticket"].get().strip() or "?",
+                "ticket": bruto or "?",
                 "zendesk": self.vars["zendesk"].get().strip(),
+                "prefixo_ticket": self.vars["prefixo_ticket"].get(),
             }
             self.lbl_previa.configure(text="Ficara: " + montar_nome(dados, 1))
         except Exception:
@@ -1577,7 +1685,9 @@ class CadastroHUD(tk.Tk):
                 "Confirmar cadastro",
                 f"Isto vai CRIAR {total} equipamento(s) em "
                 f"{dados['empresa']} — de verdade, na produção.\n\n"
-                f"Ticket: {dados['ticket']}\n\nContinuar?",
+                f"Ticket: {dados['prefixo_ticket']}-{dados['ticket']}\n"
+                f"O 1º ficará: {montar_nome(dados, dados['parou'] + 1)}\n\n"
+                "Continuar?",
             ):
                 return
 
@@ -1650,14 +1760,15 @@ class CadastroHUD(tk.Tk):
         empresa = req("empresa", "Empresa").upper()
         equipamento = req("equipamento", "Equipamento").upper()
 
-        # Aceita o ticket como ele vem do ClickUp: "HWS-12312", "hws 12312"
-        # ou só "12312". Guardamos o número; o prefixo é reposto ao montar
-        # o nome.
+        # Aceita o ticket como ele vem do ClickUp ou do SGI: "HWS-12312",
+        # "hws 12312", "SP-4471" ou só o número. Guardamos o número; o
+        # prefixo escolhido nos radios é reposto ao montar o nome.
         ticket = normalizar_ticket(req("ticket", "Ticket"))
         if not ticket.isdigit():
             raise ValueError(
                 "Ticket inválido: {!r}\n"
-                "Use o número (12312) ou o ticket inteiro (HWS-12312).".format(
+                "Use o número (12312) ou o ticket inteiro "
+                "(HWS-12312, SP-4471).".format(
                     self.vars["ticket"].get().strip()
                 )
             )
@@ -1693,6 +1804,7 @@ class CadastroHUD(tk.Tk):
         return dict(
             usuario=usuario, senha=senha,
             empresa=empresa, equipamento=equipamento, ticket=ticket,
+            prefixo_ticket=self.vars["prefixo_ticket"].get(),
             zendesk=zendesk, parou=parou, limite=limite,
             modelos=[str(self.selecao["modelo"]["id"])],
             grupos=[str(self.selecao["grupo"]["id"])],

@@ -96,25 +96,45 @@ def _resolver(colecao, termos, rotulo, escolher=None, confirmar=False):
     return achados[0]
 
 
+# De onde o chamado veio: HWS e o ClickUp, SP e o SGI. So muda o prefixo
+# do nome - o resto do padrao e identico.
+PREFIXOS_TICKET = ("HWS", "SP")
+PADRAO_PREFIXO = "HWS"
+
+_RE_PREFIXO = re.compile(
+    r"^({})[\s\-_]*".format("|".join(PREFIXOS_TICKET)), re.IGNORECASE
+)
+
+
+def detectar_prefixo(valor):
+    """Devolve o prefixo escrito no ticket, ou None se veio so o numero."""
+    achado = _RE_PREFIXO.match(str(valor or "").strip())
+    return achado.group(1).upper() if achado else None
+
+
 def normalizar_ticket(valor):
     """
-    Aceita o ticket como ele vem do ClickUp e devolve so o numero.
+    Aceita o ticket como ele vem do ClickUp ou do SGI e devolve so o numero.
 
-    'HWS-12312', 'hws-12312', 'HWS 12312', 'hws12312' e '12312' dao todos
-    '12312'. O prefixo e reposto na hora de montar o nome, entao guardar so
-    o numero evita o "HWS-HWS-12312" de quem cola o ticket inteiro.
+    'HWS-12312', 'hws-12312', 'HWS 12312', 'hws12312', 'SP-4471' e '12312'
+    dao todos so o numero. O prefixo e reposto na hora de montar o nome,
+    entao guardar so o numero evita o "HWS-HWS-12312" de quem cola o ticket
+    inteiro - e tambem o "HWS-SP-4471" de quem troca a origem depois de
+    colar.
     """
-    texto = str(valor or "").strip()
-    return re.sub(r"^hws[\s\-_]*", "", texto, flags=re.IGNORECASE).strip()
+    return _RE_PREFIXO.sub("", str(valor or "").strip()).strip()
 
 
 def montar_nome(dados, numero):
     zendesk = str(dados.get("zendesk") or "").strip()
     sufixo = " | #{}".format(zendesk) if zendesk and zendesk.upper() != "N" else ""
+    prefixo = str(dados.get("prefixo_ticket") or PADRAO_PREFIXO).strip().upper()
+    if prefixo not in PREFIXOS_TICKET:
+        prefixo = PADRAO_PREFIXO
     # normaliza de novo aqui: e o unico ponto por onde todo nome passa, e
     # assim nem um chamador distraido consegue produzir "HWS-HWS-...".
-    return "{} | {} | HWS-{}{} | {:02d}".format(
-        dados["empresa"], dados["equipamento"],
+    return "{} | {} | {}-{}{} | {:02d}".format(
+        dados["empresa"], dados["equipamento"], prefixo,
         normalizar_ticket(dados["ticket"]), sufixo, numero
     )
 
@@ -157,18 +177,38 @@ def executar_automacao_api(
         )
     )
 
-    # molde do equipamento: replica as flags de um cadastro ja validado
-    termo_molde = dados.get("molde") or "hws-"
-    cands = [
-        e
-        for e in equipamentos
-        if termo_molde.lower() in (e.get("name") or "").lower()
-    ]
+    # molde do equipamento: replica as flags de um cadastro ja validado.
+    #
+    # Sem molde informado, procura por um cadastro do mesmo prefixo e depois
+    # pelos outros. Fixar "hws-" aqui quebraria o primeiro cliente que so
+    # tivesse tickets do SGI - nao existiria nenhum "HWS-" na base dele.
+    if dados.get("molde"):
+        tentativas = [dados["molde"]]
+    else:
+        prefixo = str(
+            dados.get("prefixo_ticket") or PADRAO_PREFIXO
+        ).strip().upper()
+        tentativas = ["{}-".format(prefixo)] + [
+            "{}-".format(p) for p in PREFIXOS_TICKET if p != prefixo
+        ]
+
+    cands, termo_molde = [], tentativas[0]
+    for termo in tentativas:
+        cands = [
+            e for e in equipamentos
+            if termo.lower() in (e.get("name") or "").lower()
+        ]
+        if cands:
+            termo_molde = termo
+            break
+
     if not cands:
         raise ValueError(
-            "Nenhum equipamento existente casa com '{}' para servir de molde.\n"
+            "Nenhum equipamento existente casa com {} para servir de molde.\n"
             "Sem molde eu teria que chutar as flags (horimetro, odometro, "
-            "forceAssignment...). Informe um molde valido.".format(termo_molde)
+            "forceAssignment...). Informe um molde valido.".format(
+                " nem ".join(repr(t) for t in tentativas)
+            )
         )
     molde = cli.equipamento(cands[0]["id"])
     log("Molde: {}".format(molde.get("name")))
