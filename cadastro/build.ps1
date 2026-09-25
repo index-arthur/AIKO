@@ -71,6 +71,7 @@ python -m PyInstaller --noconfirm --windowed `
     --hidden-import motor_api `
     --hidden-import motor_vinculo `
     --hidden-import motor_starlink `
+    --hidden-import motor_clickup `
     --hidden-import trackit_api_client `
     --distpath $dist --workpath $work --specpath (Join-Path $raiz "_build") `
     main.py

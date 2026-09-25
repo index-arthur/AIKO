@@ -8,7 +8,8 @@ import subprocess
 import webbrowser
 import urllib.request
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
+from datetime import date
 
 import sv_ttk
 
@@ -24,10 +25,11 @@ from motor_starlink import executar_starlink
 from motor_starlink import montar_nome as montar_nome_sl
 from motor_vinculo import executar_vinculacao
 from motor_devolucao import executar_devolucao
+import motor_clickup as mcu
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.8"
+VERSION = "6.9"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -104,7 +106,28 @@ TUTORIAL_TXT = (
     "então clique em Vincular. Como device inexistente vira cadastro\n"
     "novo, um IMEI digitado errado não dá erro — vira um device com o\n"
     "número torto. A conferência na simulação é o que evita isso.\n"
+    "\n"
+    "ABA STARLINK:\n\n"
+    "Cole os S/N dos kits, um por linha. Se quiser, o patrimônio vai na\n"
+    "mesma linha, ao lado (colado do Excel já vem assim).\n"
+    "\n"
+    "Marque onde gravar: TracKit, ClickUp ou os dois.\n"
+    "\n"
+    "No ClickUp (board Ativos TI) o casamento é pelo S/N:\n"
+    "  • S/N que ainda não está em nenhum card → cria o próximo SM/SV\n"
+    "    da sequência;\n"
+    "  • S/N que já está em um card → atualiza aquele card.\n"
+    "Só os campos marcados são gravados; os outros ficam como estão.\n"
+    "Com o TracKit marcado junto, o Cadastro no Trackit vira SIM sozinho.\n"
+    "\n"
+    "Na primeira vez, Conectar ClickUp pede o seu token pessoal\n"
+    "(ClickUp > avatar > Configurações > Apps > API Token). Ele fica\n"
+    "criptografado neste computador, só para o seu usuário.\n"
 )
+
+def datetime_hoje():
+    return date.today().strftime("%d/%m/%Y")
+
 
 # ==================== UPDATE CHECK ====================
 def _comparar_versoes(remota, local):
@@ -715,11 +738,26 @@ class CadastroHUD(tk.Tk):
 
         ttk.Label(
             bloco_sl,
-            text="Um S/N por linha. Cada kit vira um equipamento\n"
+            text="Um S/N por linha - o patrimonio pode vir ao lado (so o\n"
+                 "ClickUp usa). No TracKit cada kit vira um equipamento\n"
                  "\"SM - <S/N>\" no modelo Starlink e grupo Starlink Aiko,\n"
                  "mais o device type 3 (Globalstar) ja vinculado.",
             style="Sub.TLabel", justify="left",
         ).grid(row=3, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
+
+        ttk.Label(bloco_sl, text="Gravar em").grid(
+            row=4, column=0, sticky="w", pady=(12, 0))
+        destinos = ttk.Frame(bloco_sl)
+        destinos.grid(row=4, column=1, sticky="w", padx=(12, 0), pady=(12, 0))
+        self.sl_trackit = tk.BooleanVar(value=True)
+        self.sl_clickup = tk.BooleanVar(value=False)
+        ttk.Checkbutton(destinos, text="TracKit", variable=self.sl_trackit
+                        ).pack(side="left", padx=(0, 16))
+        ttk.Checkbutton(destinos, text="ClickUp (Ativos TI)",
+                        variable=self.sl_clickup,
+                        command=self._ao_marcar_clickup).pack(side="left")
+
+        self._montar_clickup(aba_sl)
 
         # ---------- Aba 4: devolucao ----------
         bloco_dev = ttk.Labelframe(
@@ -856,6 +894,11 @@ class CadastroHUD(tk.Tk):
                    3: "Desvincular"}
         self.btn_iniciar.configure(
             text=rotulos.get(self._aba_atual(), "Cadastrar"))
+        # Quem ja salvou o token nao precisa clicar em Conectar ClickUp toda
+        # vez: ao abrir a aba Starlink as listas carregam sozinhas.
+        if (self._aba_atual() == 2 and not self.cu_conectado
+                and not self.cu_conectando and mcu.ler_token()):
+            self._conectar_clickup()
 
     def _on_acao(self, dry_run=False):
         """O botao principal serve as quatro abas."""
@@ -1145,96 +1188,166 @@ class CadastroHUD(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     # ----- Starlink -----
-    def _seriais_starlink(self):
-        bruto = self.txt_starlink.get("1.0", "end")
-        return [ln.strip() for ln in bruto.splitlines() if ln.strip()]
+    def _itens_starlink(self):
+        """[{serial, patrimonio}] - o patrimonio e opcional, ao lado do S/N."""
+        return mcu.ler_linhas(self.txt_starlink.get("1.0", "end"))
 
     def _previa_starlink(self):
-        seriais = self._seriais_starlink()
+        itens = self._itens_starlink()
         prefixo = self.vars["prefixo_sl"].get()
-        if not seriais:
+        if not itens:
             self.lbl_starlink.configure(text="")
             return
-        self.lbl_starlink.configure(
-            text="{} kit(s) · o 1º ficará: {}".format(
-                len(seriais), montar_nome_sl(prefixo, seriais[0])))
+        texto = "{} kit(s) · o 1º ficará: {}".format(
+            len(itens), montar_nome_sl(prefixo, itens[0]["serial"]))
+        com_pat = sum(1 for i in itens if i["patrimonio"])
+        if com_pat:
+            texto += " · {} com patrimônio".format(com_pat)
+        self.lbl_starlink.configure(text=texto)
 
     def _on_starlink(self, dry_run=False):
-        seriais = self._seriais_starlink()
+        itens = self._itens_starlink()
+        seriais = [i["serial"] for i in itens]
         empresa = self.vars["empresa"].get().strip().upper()
         prefixo = self.vars["prefixo_sl"].get()
+        fazer_tk = self.sl_trackit.get()
+        fazer_cu = self.sl_clickup.get()
 
-        if not empresa:
+        if not (fazer_tk or fazer_cu):
+            messagebox.showerror("Nada marcado",
+                                 "Marque TracKit, ClickUp ou os dois.")
+            return
+        if fazer_tk and not empresa:
             messagebox.showerror("Falta a empresa", "Informe a sigla da empresa.")
             return
         if not seriais:
             messagebox.showerror("Falta a lista", "Cole os S/N, um por linha.")
             return
 
-        if not dry_run and not messagebox.askyesno(
-            "Confirmar cadastro de Starlink",
-            f"Isto vai CRIAR {len(seriais)} Starlink em {empresa} — "
-            f"de verdade, na produção.\n\n"
-            f"Cada kit gera um equipamento ({prefixo} - S/N) e um device.\n\n"
-            "Continuar?",
-        ):
-            return
+        dados_cu = None
+        if fazer_cu:
+            token = mcu.ler_token()
+            if not token or not self.cu_conectado:
+                messagebox.showerror(
+                    "ClickUp não conectado",
+                    "Clique em Conectar ClickUp antes (e espere as listas "
+                    "carregarem).")
+                return
+            try:
+                campos = self._campos_clickup()
+            except ValueError as e:
+                messagebox.showerror("Campo do ClickUp", str(e))
+                return
+            status_card = self.cmb_status_card.get() \
+                if self.cu_status_marcado.get() else None
+            dados_cu = dict(token=token, prefixo=prefixo, itens=itens,
+                            campos=campos, status_card=status_card,
+                            trackit_sim=fazer_tk)
+            self._salvar_ultimos_clickup()
 
-        prefixo_usr = self.vars["usuario"].get().strip()
-        if prefixo_usr.lower().endswith("@aiko.digital"):
-            prefixo_usr = prefixo_usr[: -len("@aiko.digital")]
+        if not dry_run:
+            partes = []
+            if fazer_tk:
+                partes.append(
+                    f"• TracKit: CRIAR {len(seriais)} Starlink em {empresa}\n"
+                    f"   (cada kit gera um equipamento {prefixo} - S/N e um device)")
+            if fazer_cu:
+                partes.append(
+                    f"• ClickUp: criar ou atualizar {len(seriais)} card(s) "
+                    "no Ativos TI\n   (o log da simulação mostra qual é qual)")
+            if not messagebox.askyesno(
+                "Confirmar Starlink",
+                "Isto vai gravar de verdade, na produção:\n\n"
+                + "\n".join(partes) + "\n\nContinuar?",
+            ):
+                return
 
-        dados = dict(
-            empresa=empresa,
-            usuario=(prefixo_usr + "@aiko.digital") if prefixo_usr else None,
-            senha=self.vars["senha"].get() or None,
-            seriais=seriais, prefixo=prefixo,
-        )
+        dados = None
+        if fazer_tk:
+            prefixo_usr = self.vars["usuario"].get().strip()
+            if prefixo_usr.lower().endswith("@aiko.digital"):
+                prefixo_usr = prefixo_usr[: -len("@aiko.digital")]
+            dados = dict(
+                empresa=empresa,
+                usuario=(prefixo_usr + "@aiko.digital") if prefixo_usr else None,
+                senha=self.vars["senha"].get() or None,
+                seriais=seriais, prefixo=prefixo,
+            )
 
         for b in (self.btn_iniciar, self.btn_simular):
             b.configure(state="disabled")
         self.progresso["value"] = 0
         self.progresso["maximum"] = max(len(seriais), 1)
+        onde = " + ".join(n for n, f in (("TracKit " + empresa, fazer_tk),
+                                         ("ClickUp", fazer_cu)) if f)
         self._log(("[SIMULAÇÃO] " if dry_run else "")
-                  + f"Starlink: {len(seriais)} kit(s) em {empresa}...")
+                  + f"Starlink: {len(seriais)} kit(s) em {onde}...")
+
+        log = lambda m, t=None: self.after(0, self._log, m, t)
+        progresso = lambda f, t: self.after(
+            0, lambda: self.progresso.configure(value=f, maximum=t))
 
         def worker():
+            linhas, titulo, aviso = [], "Finalizado", False
             try:
-                resumo = executar_starlink(
-                    dados,
-                    log=lambda m, t=None: self.after(0, self._log, m, t),
-                    dry_run=dry_run,
-                    progresso=lambda f, t: self.after(
-                        0, lambda: self.progresso.configure(value=f, maximum=t)
-                    ),
-                )
+                resumo = None
+                if fazer_tk:
+                    resumo = executar_starlink(dados, log=log, dry_run=dry_run,
+                                               progresso=progresso)
+                    if resumo["problemas"]:
+                        titulo, aviso = "Nada foi gravado", True
+                        linhas.append("TracKit barrado:\n- "
+                                      + "\n- ".join(resumo["problemas"][:6]))
+                    elif resumo["dry_run"]:
+                        linhas.append(f"TracKit: {resumo['total']} Starlink "
+                                      "prontos.")
+                    elif resumo["falhas"]:
+                        aviso = True
+                        linhas.append(f"TracKit: criados {resumo['criados']}, "
+                                      f"COM PROBLEMA {resumo['falhas']}.")
+                    else:
+                        linhas.append(f"TracKit: {resumo['criados']} Starlink "
+                                      "cadastrados e conferidos.")
+
+                # ClickUp so depois de um TracKit limpo: marcar "Cadastro no
+                # Trackit = SIM" em kit que falhou la seria mentir no board.
+                tk_limpo = resumo is None or (
+                    not resumo["problemas"]
+                    and (resumo["dry_run"] or not resumo["falhas"]))
+                if fazer_cu and not tk_limpo:
+                    log("ClickUp não foi tocado: resolva o TracKit primeiro.",
+                        "aviso")
+                    linhas.append("ClickUp: não foi tocado.")
+                elif fazer_cu:
+                    r = mcu.executar_clickup(dados_cu, log=log, dry_run=dry_run,
+                                             progresso=progresso)
+                    if r["problemas"]:
+                        aviso = True
+                        linhas.append("ClickUp barrado:\n- "
+                                      + "\n- ".join(r["problemas"][:6]))
+                    elif r["dry_run"]:
+                        linhas.append(f"ClickUp: {r['total']} card(s) prontos.")
+                    else:
+                        if r["falhas"]:
+                            aviso = True
+                        linhas.append(
+                            f"ClickUp: {r['criados']} criado(s), "
+                            f"{r['atualizados']} atualizado(s)"
+                            + (f", COM PROBLEMA {r['falhas']}"
+                               if r["falhas"] else " e conferidos") + ".")
+
+                if dry_run:
+                    titulo = "Simulação"
+                    linhas.append("\nNada foi gravado. Confira no log.")
+                elif aviso and titulo == "Finalizado":
+                    titulo = "Concluído com problemas"
 
                 def fim():
-                    if resumo["problemas"]:
-                        messagebox.showwarning(
-                            "Nada foi gravado",
-                            "O cadastro foi barrado:\n\n- "
-                            + "\n- ".join(resumo["problemas"][:6]),
-                        )
-                    elif resumo["dry_run"]:
-                        messagebox.showinfo(
-                            "Simulação",
-                            f"{resumo['total']} Starlink prontos.\n"
-                            "Confira os nomes no log.",
-                        )
-                    elif resumo["falhas"]:
-                        messagebox.showwarning(
-                            "Concluído com problemas",
-                            f"Criados: {resumo['criados']}\n"
-                            f"COM PROBLEMA: {resumo['falhas']}\n\n"
-                            "Veja o log.",
-                        )
+                    corpo = "\n".join(linhas)
+                    if aviso:
+                        messagebox.showwarning(titulo, corpo + "\n\nVeja o log.")
                     else:
-                        messagebox.showinfo(
-                            "Finalizado",
-                            f"{resumo['criados']} Starlink cadastrados "
-                            "e conferidos.",
-                        )
+                        messagebox.showinfo(titulo, corpo)
                 self.after(0, fim)
             except Exception as e:
                 erro = str(e)
@@ -1246,6 +1359,246 @@ class CadastroHUD(tk.Tk):
                 self.after(0, restaurar)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # ----- Starlink: ClickUp -----
+    cu_conectado = False
+    cu_conectando = False
+
+    def _montar_clickup(self, aba_sl):
+        bloco = ttk.Labelframe(aba_sl, text=" ClickUp - board Ativos TI ",
+                               padding=(14, 10, 14, 12))
+        bloco.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        bloco.columnconfigure(1, weight=1)
+        self.bloco_cu = bloco
+        # quem usa o ClickUp sempre nao deveria ter de remarcar a cada abertura
+        self.sl_clickup.set(bool(mcu.ler_ultimos().get("_clickup_ligado")))
+
+        conexao = ttk.Frame(bloco)
+        conexao.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        self.btn_cu = ttk.Button(conexao, text="Conectar ClickUp",
+                                 command=self._conectar_clickup)
+        self.btn_cu.pack(side="left")
+        ttk.Button(conexao, text="Trocar token",
+                   command=self._trocar_token_clickup).pack(side="left",
+                                                            padx=(6, 0))
+        self.lbl_cu = ttk.Label(conexao, text="nao conectado",
+                                style="Sub.TLabel")
+        self.lbl_cu.pack(side="left", padx=(12, 0))
+
+        # Status do card (o do quadro, nao o campo STATUS)
+        self.cu_status_marcado = tk.BooleanVar(value=True)
+        ttk.Checkbutton(bloco, text="Status do card",
+                        variable=self.cu_status_marcado,
+                        command=lambda: self.cmb_status_card.configure(
+                            state="readonly" if self.cu_status_marcado.get()
+                            else "disabled")).grid(
+            row=1, column=0, sticky="w", pady=(0, 6))
+        self.cmb_status_card = ttk.Combobox(bloco, state="readonly", values=[])
+        self.cmb_status_card.grid(row=1, column=1, sticky="ew", pady=(0, 6),
+                                  padx=(12, 0))
+
+        self.cu_linhas = []
+        for r, campo in enumerate(mcu.CAMPOS, start=2):
+            marcado = tk.BooleanVar(value=False)
+            valor = tk.StringVar()
+            if campo["tipo"] == "data":
+                valor.set(datetime_hoje())
+            elif campo.get("padrao"):
+                valor.set(campo["padrao"])
+            if campo["tipo"] in ("lista", "etiqueta"):
+                w = ttk.Combobox(bloco, textvariable=valor, values=[],
+                                 state="disabled")
+            else:
+                w = ttk.Entry(bloco, textvariable=valor, state="disabled")
+            linha = {"campo": campo, "marcado": marcado, "valor": valor,
+                     "widget": w, "opcoes": []}
+
+            def alternar(l=linha):
+                if not l["marcado"].get():
+                    estado = "disabled"
+                elif l["campo"]["tipo"] == "lista":
+                    estado = "readonly"
+                else:
+                    estado = "normal"
+                l["widget"].configure(state=estado)
+
+            ttk.Checkbutton(bloco, text=campo["rotulo"], variable=marcado,
+                            command=alternar).grid(row=r, column=0,
+                                                   sticky="w", pady=(0, 6))
+            w.grid(row=r, column=1, sticky="ew", pady=(0, 6), padx=(12, 0))
+            if campo["tipo"] == "etiqueta":
+                # Cliente: sao ~90 siglas. Digitar filtra a lista.
+                w.bind("<KeyRelease>",
+                       lambda e, l=linha: self._filtrar_etiqueta(l))
+            linha["alternar"] = alternar
+            self.cu_linhas.append(linha)
+
+        ttk.Label(
+            bloco,
+            text="Casa pelo S/N: kit que ainda nao tem card vira o proximo\n"
+                 "SM/SV da sequencia; kit que ja tem card e atualizado.\n"
+                 "So os campos marcados sao gravados. Com o TracKit marcado\n"
+                 "junto, o Cadastro no Trackit vira SIM sozinho.",
+            style="Sub.TLabel", justify="left",
+        ).grid(row=len(mcu.CAMPOS) + 2, column=1, sticky="w", padx=(12, 0),
+               pady=(6, 0))
+
+        self._ao_marcar_clickup()
+
+    def _ao_marcar_clickup(self):
+        """O quadro do ClickUp so aparece quando o ClickUp esta marcado."""
+        if not hasattr(self, "bloco_cu"):
+            return
+        if self.sl_clickup.get():
+            self.bloco_cu.grid()
+            if not self.cu_conectado and not self.cu_conectando \
+                    and mcu.ler_token():
+                self._conectar_clickup()
+        else:
+            self.bloco_cu.grid_remove()
+
+    def _filtrar_etiqueta(self, linha):
+        termo = linha["valor"].get().strip().lower()
+        nomes = [n for _, n in linha["opcoes"]]
+        linha["widget"].configure(
+            values=[n for n in nomes if termo in n.lower()] if termo else nomes)
+
+    def _trocar_token_clickup(self):
+        mcu.apagar_token()
+        self.cu_conectado = False
+        self.lbl_cu.configure(text="nao conectado", style="Sub.TLabel")
+        self._conectar_clickup()
+
+    def _conectar_clickup(self):
+        token = mcu.ler_token()
+        if not token:
+            token = simpledialog.askstring(
+                "Token do ClickUp",
+                "Cole o seu token pessoal da API do ClickUp (começa com pk_).\n\n"
+                "Para gerar: no ClickUp, clique no seu avatar >\n"
+                "Configurações > Apps > API Token > Gerar.\n\n"
+                "Ele fica criptografado neste computador, só para o seu\n"
+                "usuário do Windows.",
+                show="*", parent=self)
+            if not token or not token.strip():
+                return
+            token = token.strip()
+
+        self.cu_conectando = True
+        self.btn_cu.configure(state="disabled", text="Conectando...")
+        self.lbl_cu.configure(text="conectando...", style="Sub.TLabel")
+
+        def worker():
+            try:
+                cu = mcu.ClickUp(token)
+                usuario = cu.usuario()
+                campos = {f["id"]: f for f in cu.campos()}
+                statuses = cu.statuses()
+                mcu.salvar_token(token)
+                self.after(0, lambda: self._clickup_conectado(
+                    usuario, campos, statuses))
+            except Exception as e:
+                erro = str(e)
+                if " 401 " in erro or "OAUTH" in erro:
+                    mcu.apagar_token()
+                    erro = "O ClickUp recusou o token. Gere outro e tente de novo."
+
+                def falhou():
+                    self.lbl_cu.configure(text="falhou", style="Erro.TLabel")
+                    self._log("ClickUp: conexão falhou: " + erro, "erro")
+                    messagebox.showerror("ClickUp não conectou", erro)
+                self.after(0, falhou)
+            finally:
+                def fim():
+                    self.cu_conectando = False
+                    self.btn_cu.configure(state="normal",
+                                          text="Conectar ClickUp")
+                self.after(0, fim)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _clickup_conectado(self, usuario, campos, statuses):
+        for linha in self.cu_linhas:
+            campo = linha["campo"]
+            if campo["tipo"] not in ("lista", "etiqueta"):
+                continue
+            opcoes = ((campos.get(campo["id"]) or {}).get("type_config") or {}) \
+                .get("options") or []
+            chave = "label" if campo["tipo"] == "etiqueta" else "name"
+            linha["opcoes"] = [(o["id"], (o.get(chave) or "").strip())
+                               for o in opcoes]
+            if campo["tipo"] == "etiqueta":
+                linha["opcoes"].sort(key=lambda p: p[1].lower())
+            linha["widget"].configure(values=[n for _, n in linha["opcoes"]])
+        self.cmb_status_card.configure(values=statuses)
+        if "estoque" in statuses and not self.cmb_status_card.get():
+            self.cmb_status_card.set("estoque")
+        self._restaurar_ultimos_clickup()
+        self.cu_conectado = True
+        self.lbl_cu.configure(
+            text="conectado como " + (usuario.get("username") or "?"),
+            style="Ok.TLabel")
+        self._log("ClickUp conectado ({}).".format(usuario.get("username")),
+                  "ok")
+
+    def _campos_clickup(self):
+        """[{campo, valor, texto}] dos campos marcados. ValueError se faltar."""
+        saida = []
+        for linha in self.cu_linhas:
+            if not linha["marcado"].get():
+                continue
+            campo, texto = linha["campo"], linha["valor"].get().strip()
+            rot = campo["rotulo"]
+            if not texto:
+                raise ValueError(f"{rot}: preencha ou desmarque.")
+            if campo["tipo"] == "texto":
+                valor = texto
+            elif campo["tipo"] == "moeda":
+                valor = mcu.ler_moeda(texto)
+                texto = "R$ {:,.2f}".format(valor).replace(",", "X") \
+                    .replace(".", ",").replace("X", ".")
+            elif campo["tipo"] == "data":
+                valor = mcu.data_em_ms(mcu.ler_data(texto))
+            else:
+                achado = next((i for i, n in linha["opcoes"]
+                               if n.lower() == texto.lower()), None)
+                if not achado:
+                    raise ValueError(f"{rot}: '{texto}' não é uma opção do "
+                                     "ClickUp - escolha na lista.")
+                valor = [achado] if campo["tipo"] == "etiqueta" else achado
+            saida.append({"campo": campo, "valor": valor, "texto": texto})
+        return saida
+
+    def _salvar_ultimos_clickup(self):
+        dados = {l["campo"]["id"]: {"marcado": l["marcado"].get(),
+                                    "valor": l["valor"].get()}
+                 for l in self.cu_linhas}
+        dados["_status_card"] = {"marcado": self.cu_status_marcado.get(),
+                                 "valor": self.cmb_status_card.get()}
+        dados["_clickup_ligado"] = self.sl_clickup.get()
+        try:
+            mcu.salvar_ultimos(dados)
+        except OSError:
+            pass
+
+    def _restaurar_ultimos_clickup(self):
+        dados = mcu.ler_ultimos()
+        for linha in self.cu_linhas:
+            d = dados.get(linha["campo"]["id"])
+            if not d:
+                continue
+            linha["marcado"].set(bool(d.get("marcado")))
+            # data de vinculacao nasce sempre hoje: e o dia em que o kit sai
+            if not linha["campo"].get("hoje"):
+                linha["valor"].set(d.get("valor") or "")
+            linha["alternar"]()
+        s = dados.get("_status_card")
+        if s:
+            self.cu_status_marcado.set(bool(s.get("marcado")))
+            if s.get("valor"):
+                self.cmb_status_card.set(s["valor"])
+            self.cmb_status_card.configure(
+                state="readonly" if self.cu_status_marcado.get() else "disabled")
 
     # ----- Previa do nome, ao vivo -----
     def _atualizar_previa(self):
