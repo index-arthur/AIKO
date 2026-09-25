@@ -108,6 +108,20 @@ class TrackitClient:
             "?equipmentId={}".format(equipment_id)
         )
 
+    def ultima_comunicacao(self, equipment_id):
+        """
+        Quando o equipamento falou com o TracKit pela ultima vez (ISO), ou
+        None se nunca falou.
+
+        E o que separa maquina em campo de bordo que voltou ao estoque. Um
+        erro AQUI nao pode virar None: quem chama precisa distinguir "esta
+        mudo" de "nao consegui perguntar", e por isso a excecao sobe.
+        """
+        return self._get(
+            "Forms/Equipment/GetLastCommunicationDate"
+            "?equipmentId={}".format(equipment_id)
+        )
+
     # ---------- escrita ----------
     def salvar_equipamento(self, equipment):
         return self._post("Forms/Equipment/SaveEquipment", equipment)
@@ -122,6 +136,19 @@ class TrackitClient:
         """mdt = {'deviceID': str, 'type': int, 'equipmentID': str|None}"""
         return self._post(
             "Forms/MobileDataTerminal/SaveMobileDataTerminal", mdt
+        )
+
+    def excluir_equipamento(self, equipment_id):
+        """
+        Exclui o equipamento. O corpo e so o id, nao um objeto - e assim que
+        a tela do TracKit chama.
+
+        Irreversivel e sem desfazer. O TracKit recusa enquanto houver bordo
+        vinculado, que e a ordem que o estoque ja segue na mao: primeiro
+        "Nao associado" no bordo, depois excluir o equipamento.
+        """
+        return self._post(
+            "Forms/Equipment/DeleteEquipment", int(equipment_id)
         )
 
 

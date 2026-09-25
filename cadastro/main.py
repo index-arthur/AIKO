@@ -24,12 +24,12 @@ from motor_api import (
 from motor_starlink import executar_starlink
 from motor_starlink import montar_nome as montar_nome_sl
 from motor_vinculo import executar_vinculacao
-from motor_devolucao import executar_devolucao
+from motor_devolucao import executar_devolucao, MARCA_EQUIP
 import motor_clickup as mcu
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "6.9"
+VERSION = "7.0"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -838,6 +838,31 @@ class CadastroHUD(tk.Tk):
         self.lbl_devolucao.grid(row=7, column=1, sticky="w", padx=(12, 0),
                                 pady=(6, 0))
 
+        ttk.Label(bloco_dev, text="Acao").grid(row=8, column=0, sticky="nw",
+                                               pady=(10, 2))
+        acao = ttk.Frame(bloco_dev)
+        acao.grid(row=8, column=1, sticky="ew", padx=(12, 0), pady=(10, 2))
+        self.vars["acao_dev"] = tk.StringVar(value="desvincular")
+        ttk.Radiobutton(
+            acao, text="So desvincular (deixa o bordo \"Nao associado\")",
+            value="desvincular", variable=self.vars["acao_dev"],
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            acao, text="Desvincular e EXCLUIR o equipamento",
+            value="excluir", variable=self.vars["acao_dev"],
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Volta desmarcada a cada lote (ver _on_devolucao): excecao que fica
+        # marcada vira padrao em duas semanas, e ai a trava nao serve para
+        # nada.
+        self.vars["forcar_ativos"] = tk.BooleanVar(value=False)
+        self.chk_forcar = ttk.Checkbutton(
+            acao,
+            text="Desvincular mesmo os que ainda comunicam (perigoso)",
+            variable=self.vars["forcar_ativos"],
+        )
+        self.chk_forcar.pack(anchor="w", pady=(8, 0))
+
         ttk.Label(
             bloco_dev,
             text="Um deviceID por linha - a ordem nao importa. Cada um sai do\n"
@@ -846,9 +871,13 @@ class CadastroHUD(tk.Tk):
                  "O cadastro do bordo NAO e apagado: ele continua na base para\n"
                  "ser vinculado de novo. Se o device nao existir, nada e criado\n"
                  "e o lote inteiro para - devolucao e sempre de bordo que ja\n"
-                 "rodou em campo, entao isso e erro de digitacao.",
+                 "rodou em campo, entao isso e erro de digitacao.\n\n"
+                 "Antes de gravar, a automacao pergunta ao TracKit quando cada\n"
+                 "equipamento comunicou pela ultima vez. Se falou nos ultimos\n"
+                 "30 dias, a maquina esta em campo e o lote para: desvincular\n"
+                 "faria ela parar de guardar dados sem ninguem perceber.",
             style="Sub.TLabel", justify="left",
-        ).grid(row=8, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
+        ).grid(row=9, column=1, sticky="w", padx=(12, 0), pady=(10, 0))
 
         # ---------- Log ----------
         log_frame = ttk.Labelframe(corpo, text=" Log ", padding=(10, 8))
@@ -1016,6 +1045,7 @@ class CadastroHUD(tk.Tk):
 
     # ----- Devolucao: busca -----
     LIMITE_BUSCA = 50
+    SEM_BORDO = "(sem bordo)"
 
     def _buscar_bordo(self, _evt=None):
         termo = self.vars["busca_dev"].get().strip().lower()
@@ -1036,8 +1066,9 @@ class CadastroHUD(tk.Tk):
                    or termo in b["equipamento"].lower()]
         for b in achados[: self.LIMITE_BUSCA]:
             self.tabela_dev.insert(
-                "", "end", values=(b["device"],
-                                   b["equipamento"] or "(sem equipamento)"))
+                "", "end",
+                values=(b["device"] or self.SEM_BORDO,
+                        b["equipamento"] or "(sem equipamento)"))
 
         if not achados:
             self.lbl_busca_dev.configure(text="nada encontrado para '{}'"
@@ -1062,9 +1093,16 @@ class CadastroHUD(tk.Tk):
         if not vals:
             return
         device = vals[0]
-        # "Reserva - <deviceID>" e o nome que o estoque monta a mao no
-        # equipamento novo; copiar pronto e o ponto todo desta aba.
-        texto = device if o_que == "device" else "Reserva - {}".format(device)
+        if device == self.SEM_BORDO:
+            # linha de equipamento vazio: nao ha deviceID nem "Reserva -"
+            # que facam sentido, entao copia o que existe - o nome.
+            texto = vals[1]
+        elif o_que == "device":
+            texto = device
+        else:
+            # "Reserva - <deviceID>" e o nome que o estoque monta a mao no
+            # equipamento novo; copiar pronto e o ponto todo desta aba.
+            texto = "Reserva - {}".format(device)
         self.clipboard_clear()
         self.clipboard_append(texto)
         self.update()
@@ -1074,17 +1112,21 @@ class CadastroHUD(tk.Tk):
         vals = self._dev_selecionado()
         if not vals:
             return
-        device = vals[0]
-        if device in self._devices_devolucao():
+        # Equipamento sem bordo entra marcado: nao ha device para digitar, e
+        # o motor precisa saber que essa linha e um equipamento a excluir,
+        # nao um bordo a procurar.
+        linha = (MARCA_EQUIP + " " + vals[1]) if vals[0] == self.SEM_BORDO \
+            else vals[0]
+        if linha in self._devices_devolucao():
             self.lbl_busca_dev.configure(
-                text="{} ja esta na lista".format(device))
+                text="{} ja esta na lista".format(linha))
             return
         atual = self.txt_devolucao.get("1.0", "end").rstrip()
         self.txt_devolucao.delete("1.0", "end")
         self.txt_devolucao.insert(
-            "1.0", (atual + "\n" if atual else "") + device + "\n")
+            "1.0", (atual + "\n" if atual else "") + linha + "\n")
         self._contar_devolucao()
-        self.lbl_busca_dev.configure(text="{} adicionado a lista".format(device))
+        self.lbl_busca_dev.configure(text="{} adicionado a lista".format(linha))
 
     # ----- Devolucao -----
     def _devices_devolucao(self):
@@ -1095,6 +1137,70 @@ class CadastroHUD(tk.Tk):
         n = len(self._devices_devolucao())
         self.lbl_devolucao.configure(
             text="{} device(s) na lista".format(n) if n else "")
+
+    def _centralizar(self, win):
+        """Posiciona a janelinha sobre a principal, um terco acima do meio."""
+        win.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - win.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - win.winfo_height()) // 3
+        win.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+
+    def _confirmar_exclusao(self, quantos, empresa):
+        """
+        Digitar EXCLUIR para seguir. Nao e burocracia: exclusao de
+        equipamento nao tem desfazer, e o botao que dispara isso e o mesmo
+        que faz o desvinculo, que e reversivel. Sem uma barreira diferente,
+        as duas acoes custam o mesmo clique distraido.
+        """
+        win = tk.Toplevel(self)
+        win.title("Excluir equipamentos")
+        win.transient(self)
+        win.resizable(False, False)
+        quadro = ttk.Frame(win, padding=(18, 16))
+        quadro.pack(fill="both", expand=True)
+
+        ttk.Label(
+            quadro,
+            text="Ate {} equipamento(s) de {} serao EXCLUIDOS.".format(
+                quantos, empresa),
+            style="Title.TLabel", justify="left",
+        ).pack(anchor="w")
+        ttk.Label(
+            quadro,
+            text="Isso nao tem desfazer. O historico do equipamento vai\n"
+                 "junto. So sera excluido o que ficar sem nenhum bordo.\n\n"
+                 "Digite EXCLUIR para confirmar:",
+            style="Sub.TLabel", justify="left",
+        ).pack(anchor="w", pady=(8, 10))
+
+        var = tk.StringVar()
+        entrada = ttk.Entry(quadro, textvariable=var, width=24)
+        entrada.pack(anchor="w")
+        entrada.focus_set()
+
+        resposta = {"ok": False}
+
+        def confirmar(*_):
+            if var.get().strip().upper() == "EXCLUIR":
+                resposta["ok"] = True
+                win.destroy()
+
+        linha = ttk.Frame(quadro)
+        linha.pack(anchor="e", pady=(14, 0))
+        ttk.Button(linha, text="Cancelar",
+                   command=win.destroy).pack(side="right")
+        btn_ok = ttk.Button(linha, text="Excluir", style="Accent.TButton",
+                            command=confirmar, state="disabled")
+        btn_ok.pack(side="right", padx=(0, 8))
+        var.trace_add("write", lambda *_: btn_ok.configure(
+            state="normal" if var.get().strip().upper() == "EXCLUIR"
+            else "disabled"))
+        entrada.bind("<Return>", confirmar)
+
+        self._centralizar(win)
+        win.grab_set()
+        self.wait_window(win)
+        return resposta["ok"]
 
     def _on_devolucao(self, dry_run=False):
         devices = self._devices_devolucao()
@@ -1108,15 +1214,31 @@ class CadastroHUD(tk.Tk):
                                  "Cole os deviceID, um por linha.")
             return
 
-        if not dry_run and not messagebox.askyesno(
-            "Confirmar devolução",
-            f"Isto vai DESVINCULAR {len(devices)} bordo(s) em {empresa} — "
-            f"de verdade, na produção.\n\n"
-            "Os equipamentos onde eles estão ficam sem bordo e param de\n"
-            "reportar posição. O cadastro do bordo não é apagado.\n\n"
-            "Continuar?",
-        ):
-            return
+        excluir = self.vars["acao_dev"].get() == "excluir"
+        forcar = self.vars["forcar_ativos"].get()
+
+        if not dry_run:
+            aviso = (
+                f"Isto vai DESVINCULAR {len(devices)} bordo(s) em {empresa} — "
+                f"de verdade, na produção.\n\n"
+                "Os equipamentos onde eles estão ficam sem bordo e param de\n"
+                "reportar posição. O cadastro do bordo não é apagado.\n\n"
+            )
+            if forcar:
+                aviso += (
+                    "⚠ A trava de comunicação está DESLIGADA: bordo que ainda\n"
+                    "está em campo será desvinculado do mesmo jeito, e a\n"
+                    "máquina para de guardar dados.\n\n"
+                )
+            if not messagebox.askyesno("Confirmar devolução",
+                                       aviso + "Continuar?"):
+                return
+
+            # Exclusao e irreversivel e o botao fica ao lado de operacoes que
+            # dao para desfazer. Um "Sim" a mais nao distingue as duas - por
+            # isso aqui se digita.
+            if excluir and not self._confirmar_exclusao(len(devices), empresa):
+                return
 
         prefixo_usr = self.vars["usuario"].get().strip()
         if prefixo_usr.lower().endswith("@aiko.digital"):
@@ -1127,6 +1249,8 @@ class CadastroHUD(tk.Tk):
             usuario=(prefixo_usr + "@aiko.digital") if prefixo_usr else None,
             senha=self.vars["senha"].get() or None,
             seriais=devices,
+            excluir_equipamento=excluir,
+            forcar_ativos=forcar,
         )
 
         for b in (self.btn_iniciar, self.btn_simular):
@@ -1134,7 +1258,9 @@ class CadastroHUD(tk.Tk):
         self.progresso["value"] = 0
         self.progresso["maximum"] = max(len(devices), 1)
         self._log(("[SIMULAÇÃO] " if dry_run else "")
-                  + f"Devolução: {len(devices)} bordo(s) em {empresa}...")
+                  + "Devolução: {} bordo(s) em {}{}...".format(
+                      len(devices), empresa,
+                      " (com exclusão do equipamento)" if excluir else ""))
 
         def worker():
             try:
@@ -1173,6 +1299,8 @@ class CadastroHUD(tk.Tk):
                             "Finalizado",
                             f"{resumo['desvinculados']} bordo(s) desvinculados "
                             f"e conferidos.\n"
+                            f"{resumo.get('excluidos', 0)} equipamento(s) "
+                            f"excluído(s).\n"
                             f"{resumo['ja_soltos']} já estavam soltos.",
                         )
                 self.after(0, fim)
@@ -1183,6 +1311,9 @@ class CadastroHUD(tk.Tk):
                 def restaurar():
                     self.btn_iniciar.configure(state="normal")
                     self.btn_simular.configure(state="normal")
+                    # A excecao nao sobrevive ao lote. Deixada marcada, em
+                    # duas semanas ninguem lembra que a trava existe.
+                    self.vars["forcar_ativos"].set(False)
                 self.after(0, restaurar)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1708,16 +1839,28 @@ class CadastroHUD(tk.Tk):
                 # Alimenta a busca da aba Devolucao. Vem junto do Conectar
                 # porque sao duas leituras baratas e o estoque nao ia
                 # entender um segundo botao "carregar" so para pesquisar.
-                nomes = {e["id"]: (e.get("name") or "").strip()
-                         for e in cli.equipamentos()}
-                bordos = sorted(
-                    ({"device": (m.get("deviceID") or "").strip(),
-                      "equipamento": nomes.get(m.get("equipmentID"), "")}
-                     for m in cli._get(
-                         "Forms/MobileDataTerminal/GetAllMobileDataTerminal")
-                     if (m.get("deviceID") or "").strip()),
-                    key=lambda b: b["device"].lower(),
-                )
+                eqs = cli.equipamentos()
+                nomes = {e["id"]: (e.get("name") or "").strip() for e in eqs}
+                mdts = cli._get(
+                    "Forms/MobileDataTerminal/GetAllMobileDataTerminal")
+                bordos = [
+                    {"device": (m.get("deviceID") or "").strip(),
+                     "equipamento": nomes.get(m.get("equipmentID"), "")}
+                    for m in mdts if (m.get("deviceID") or "").strip()
+                ]
+                # Equipamento SEM bordo tambem entra na busca. Ele nao tem
+                # linha na lista de bordos, e e justamente o que sobra
+                # depois de uma devolucao - sem isso ele fica invisivel e
+                # nao da para alcanca-lo para excluir.
+                ocupados = {m.get("equipmentID") for m in mdts
+                            if m.get("equipmentID")}
+                bordos += [
+                    {"device": "", "equipamento": nomes[e["id"]]}
+                    for e in eqs
+                    if e["id"] not in ocupados and nomes[e["id"]]
+                ]
+                bordos.sort(key=lambda b: (b["device"].lower(),
+                                           b["equipamento"].lower()))
                 self.after(0, lambda: self._conectado(empresa, listas, bordos))
             except Exception as e:
                 erro = str(e)
@@ -2056,11 +2199,7 @@ class CadastroHUD(tk.Tk):
         busca_var.trace_add("write", atualizar)
         atualizar()
 
-        # centraliza sobre a janela principal
-        win.update_idletasks()
-        x = self.winfo_rootx() + (self.winfo_width() - win.winfo_width()) // 2
-        y = self.winfo_rooty() + (self.winfo_height() - win.winfo_height()) // 3
-        win.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+        self._centralizar(win)
 
         lst.focus_set()
         return win, resultado
