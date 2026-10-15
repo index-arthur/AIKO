@@ -29,7 +29,7 @@ import motor_clickup as mcu
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "7.1"
+VERSION = "7.2"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -315,6 +315,7 @@ class CadastroHUD(tk.Tk):
         except Exception:
             pass
 
+        self._resto_roda = 0   # sobra de delta entre eventos da roda
         self._aplicar_tema(self._tema_atual)
         self._montar_layout()
 
@@ -508,6 +509,11 @@ class CadastroHUD(tk.Tk):
         rolavel.bind("<Configure>", _remedir)
         self.painel.bind("<Configure>", _remedir)
 
+        # Sem isso, "uma unidade" do canvas vale um decimo da altura visivel
+        # e a rolagem anda aos blocos. Com 1, a unidade e o pixel e quem
+        # decide o passo e o codigo abaixo.
+        self.painel.configure(yscrollincrement=1)
+
         def _roda(evt):
             # No Windows a roda vai para o widget com foco, nao para o que
             # esta sob o cursor - por isso quem manda aqui e o
@@ -525,10 +531,22 @@ class CadastroHUD(tk.Tk):
                 w = getattr(w, "master", None)
             if not dentro:
                 return
+
+            # Roda de alta resolucao (e touchpad de precisao) manda delta 40
+            # ou 12, nao 120. Com "delta // 120" o positivo virava 0 e o
+            # negativo virava -1: descer rolava e SUBIR TRAVAVA. Guardar o
+            # resto corrige a assimetria e deixa o movimento continuo.
+            self._resto_roda += evt.delta
+            passos = int(self._resto_roda / 120)   # trunca, nao arredonda
+            if not passos:
+                return
+            self._resto_roda -= passos * 120
+
             inicio, fim = self.painel.yview()
             # so rola quando ha o que rolar
             if inicio > 0.0 or fim < 1.0:
-                self.painel.yview_scroll(-1 * (evt.delta // 120), "units")
+                self.painel.yview_scroll(
+                    -passos * self.PIXELS_POR_CLIQUE, "units")
 
         self.bind_all("<MouseWheel>", _roda)
 
@@ -1055,6 +1073,12 @@ class CadastroHUD(tk.Tk):
                 self.after(0, restaurar)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    # Quanto a pagina anda a cada clique da roda. O padrao do canvas dava
+    # ~30px (2% da tela por clique, 44 cliques para percorrer tudo), e
+    # parecia que a roda nao pegava. 72px fica perto dos 3 "linhas" que o
+    # Windows usa como padrao, sem saltar.
+    PIXELS_POR_CLIQUE = 72
 
     # ----- Devolucao: busca -----
     LIMITE_BUSCA = 50
