@@ -29,7 +29,7 @@ import motor_clickup as mcu
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "7.0"
+VERSION = "7.1"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -531,6 +531,19 @@ class CadastroHUD(tk.Tk):
                 self.painel.yview_scroll(-1 * (evt.delta // 120), "units")
 
         self.bind_all("<MouseWheel>", _roda)
+
+        # O Tk 9 ligou a roda do mouse em widgets que nao deviam reagir a
+        # ela: o Notebook TROCA DE ABA (ttk::notebook::CondCycleTab) e o
+        # Combobox e o Spinbox TROCAM DE VALOR so por estarem sob o cursor.
+        # Quem rolava a pagina com o mouse sobre as abas trocava de aba sem
+        # querer, e sobre os campos do ClickUp mudava o que ia ser gravado.
+        #
+        # Vira no-op em vez de "break": sem break a cadeia segue ate o
+        # bind_all acima, entao a roda continua rolando o painel, que e o
+        # que a pessoa queria fazer. O Treeview fica de fora de proposito -
+        # ali a roda rola a propria lista, e isso e esperado.
+        for _cls in ("TNotebook", "TCombobox", "TSpinbox"):
+            self.bind_class(_cls, "<MouseWheel>", lambda _e: None)
 
         # ---------- 1. Acesso ----------
         acesso = ttk.Labelframe(rolavel, text=" Acesso ", padding=(14, 10, 14, 12))
