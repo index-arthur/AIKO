@@ -29,7 +29,7 @@ import motor_clickup as mcu
 from trackit_api_client import TrackitClient, obter_sessao
 
 # ==================== CONFIG ====================
-VERSION = "7.2"
+VERSION = "7.3"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
@@ -315,7 +315,9 @@ class CadastroHUD(tk.Tk):
         except Exception:
             pass
 
-        self._resto_roda = 0   # sobra de delta entre eventos da roda
+        self._resto_roda = 0        # sobra de delta entre eventos da roda
+        self._alvo_rolagem = 0.0    # para onde a animacao esta indo
+        self._anim_rolagem = False  # ha animacao em curso?
         self._aplicar_tema(self._tema_atual)
         self._montar_layout()
 
@@ -545,8 +547,13 @@ class CadastroHUD(tk.Tk):
             inicio, fim = self.painel.yview()
             # so rola quando ha o que rolar
             if inicio > 0.0 or fim < 1.0:
-                self.painel.yview_scroll(
-                    -passos * self.PIXELS_POR_CLIQUE, "units")
+                # Parado, o alvo e relido da posicao real: quem arrastou a
+                # barra ou redimensionou a janela mexeu no canvas sem passar
+                # por aqui, e um alvo velho daria um salto no proximo clique.
+                if not self._anim_rolagem:
+                    self._alvo_rolagem = self.painel.canvasy(0)
+                self._alvo_rolagem -= passos * self.PIXELS_POR_CLIQUE
+                self._rolar_suave()
 
         self.bind_all("<MouseWheel>", _roda)
 
@@ -1079,6 +1086,57 @@ class CadastroHUD(tk.Tk):
     # parecia que a roda nao pegava. 72px fica perto dos 3 "linhas" que o
     # Windows usa como padrao, sem saltar.
     PIXELS_POR_CLIQUE = 72
+
+    # Animacao da rolagem. Sem ela cada clique era um salto seco de 72px.
+    # A cada quadro anda uma FRACAO do que falta, entao o movimento comeca
+    # rapido e freia no fim, que e o que o olho le como "liso".
+    INTERVALO_ANIM = 15      # ms entre quadros (~60 por segundo)
+    SUAVIDADE = 0.28         # quanto do restante se anda por quadro
+    PASSO_MINIMO = 4.0       # px por quadro no fim, para nao arrastar
+
+    def _limites_rolagem(self):
+        """(posicao atual, maximo, altura total) do painel, em pixels."""
+        try:
+            regiao = (self.painel.cget("scrollregion") or "").split()
+            total = float(regiao[3]) if len(regiao) == 4 else 0.0
+        except (ValueError, IndexError):
+            total = 0.0
+        visivel = self.painel.winfo_height()
+        return self.painel.canvasy(0), max(0.0, total - visivel), total
+
+    def _rolar_suave(self):
+        if not self._anim_rolagem:
+            self._anim_rolagem = True
+            self._passo_rolagem()
+
+    def _passo_rolagem(self):
+        atual, maximo, total = self._limites_rolagem()
+        if total <= 0:
+            self._anim_rolagem = False
+            return
+
+        # prende o alvo na faixa valida, senao a animacao insiste em ir
+        # para fora e nunca chega
+        self._alvo_rolagem = min(max(self._alvo_rolagem, 0.0), maximo)
+        resto = self._alvo_rolagem - atual
+
+        if abs(resto) < 1.0:
+            self.painel.yview_moveto(self._alvo_rolagem / total)
+            self._anim_rolagem = False
+            return
+
+        passo = resto * self.SUAVIDADE
+        # Piso: so com a fracao, os ultimos pixels viravam uma fila de
+        # quadros andando 1px cada, e o deslize demorava quase 1s para
+        # terminar de frear.
+        if abs(passo) < self.PASSO_MINIMO:
+            passo = self.PASSO_MINIMO if resto > 0 else -self.PASSO_MINIMO
+        # ...mas o piso nao pode passar do alvo, senao ele ultrapassa e
+        # volta, oscilando sem nunca fechar.
+        if abs(passo) > abs(resto):
+            passo = resto
+        self.painel.yview_moveto((atual + passo) / total)
+        self.after(self.INTERVALO_ANIM, self._passo_rolagem)
 
     # ----- Devolucao: busca -----
     LIMITE_BUSCA = 50
