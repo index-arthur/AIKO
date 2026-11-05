@@ -180,11 +180,25 @@
             <button type="button" data-valor="SV">Starlink V4 (SV)</button>
           </div>
 
-          <label for="sl-seriais">S/N dos kits</label>
+          <label>Kits</label>
           <div>
-            <textarea id="sl-seriais" rows="7" spellcheck="false"
-                      placeholder="um S/N por linha — patrimônio e KIT podem vir ao lado"></textarea>
-            <p class="dica" id="previa-sl"></p>
+            <div class="tabela-rolavel alta">
+              <table class="tabela planilha" id="tabela-sl">
+                <thead><tr>
+                  <th>S/N</th><th>Patrimônio</th><th>KIT</th><th></th>
+                </tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="linha espaco">
+              <button class="secundario" id="btn-sl-linha" type="button">
+                Adicionar linha</button>
+              <button class="secundario" id="btn-sl-limpar" type="button">
+                Limpar</button>
+              <span class="dica" id="previa-sl"></span>
+            </div>
+            <p class="dica">Cole direto do Excel: as colunas caem nos campos
+               certos. Colando uma coluna só, vira a lista de S/N.</p>
           </div>
 
           <label>Gravar em</label>

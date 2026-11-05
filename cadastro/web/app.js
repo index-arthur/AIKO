@@ -331,18 +331,82 @@ $("#seriais").addEventListener("input", () => {
 
 /* ---------------------------------------------------------- starlink -- */
 
+const COLS_SL = ["serial", "patrimonio", "kit"];
+
+function linhaSL(valores) {
+  const tr = document.createElement("tr");
+  COLS_SL.forEach((col, i) => {
+    const td = document.createElement("td");
+    const inp = document.createElement("input");
+    inp.dataset.col = col;
+    inp.spellcheck = false;
+    inp.value = (valores && valores[i]) || "";
+    inp.addEventListener("input", aoMexerSL);
+    inp.addEventListener("paste", colarSL);
+    td.appendChild(inp);
+    tr.appendChild(td);
+  });
+  const td = document.createElement("td");
+  td.className = "acao";
+  const x = document.createElement("button");
+  x.type = "button"; x.className = "tirar"; x.textContent = "×";
+  x.title = "Tirar esta linha";
+  x.onclick = () => { tr.remove(); garantirLinhaVazia(); previaStarlink(); };
+  td.appendChild(x);
+  tr.appendChild(td);
+  return tr;
+}
+
+function corpoSL() { return $("#tabela-sl tbody"); }
+
+function garantirLinhaVazia() {
+  const corpo = corpoSL();
+  const linhas = Array.from(corpo.children);
+  const vazia = (tr) => Array.from(tr.querySelectorAll("input"))
+    .every((i) => !i.value.trim());
+  // sempre sobra uma linha em branco no fim, para nao ter de clicar em
+  // "Adicionar linha" a cada kit
+  if (!linhas.length || !vazia(linhas[linhas.length - 1]))
+    corpo.appendChild(linhaSL());
+  // e some com as vazias do meio, menos a ultima
+  Array.from(corpo.children).slice(0, -1).forEach((tr) => {
+    if (vazia(tr)) tr.remove();
+  });
+}
+
+function aoMexerSL() { garantirLinhaVazia(); previaStarlink(); }
+
+function colarSL(evt) {
+  const texto = (evt.clipboardData || window.clipboardData).getData("text");
+  if (!texto) return;
+  const linhas = texto.replace(/\r/g, "").split("\n").filter((l) => l.trim());
+  // uma celula so: deixa o navegador colar normalmente
+  if (linhas.length === 1 && !/[\t;,]/.test(linhas[0])) return;
+  evt.preventDefault();
+
+  const partidaCol = COLS_SL.indexOf(evt.target.dataset.col);
+  const corpo = corpoSL();
+  let linha = evt.target.closest("tr");
+
+  linhas.forEach((ln) => {
+    const celulas = ln.split(/[\t;,]/).map((c) => c.trim());
+    if (!linha) { linha = linhaSL(); corpo.appendChild(linha); }
+    const inputs = linha.querySelectorAll("input");
+    celulas.forEach((v, i) => {
+      const alvo = inputs[partidaCol + i];
+      if (alvo) alvo.value = v;
+    });
+    linha = linha.nextElementSibling;
+  });
+  aoMexerSL();
+}
+
 function itensStarlink() {
-  // Espelha o ler_linhas do motor: quem manda e o FORMATO, nao a posicao.
-  //   so digitos   -> patrimonio      comeca com K -> KIT      resto -> S/N
   // Patrimonio e KIT sao do ClickUp; o TracKit leva o serial sozinho.
-  return linhasDe("sl-seriais").map((ln) => {
-    const partes = ln.split(/[\s;,]+/).filter(Boolean);
-    const it = { serial: "", patrimonio: "", kit: "" };
-    partes.forEach((p) => {
-      if (/^\d+$/.test(p) && !it.patrimonio) it.patrimonio = p;
-      else if (p[0] && p[0].toUpperCase() === "K" && !it.kit) it.kit = p;
-      else if (!it.serial) it.serial = p;
-      else if (!it.kit) it.kit = p;
+  return Array.from(corpoSL().children).map((tr) => {
+    const it = {};
+    tr.querySelectorAll("input").forEach((i) => {
+      it[i.dataset.col] = i.value.trim();
     });
     return it;
   }).filter((i) => i.serial);
@@ -363,7 +427,13 @@ function previaStarlink() {
   $("#previa-sl").textContent =
     `${itens.length} kit(s) · o 1º ficará: ${pref} - ${itens[0].serial}${nota}`;
 }
-$("#sl-seriais").addEventListener("input", previaStarlink);
+$("#btn-sl-linha").onclick = () => {
+  corpoSL().appendChild(linhaSL());
+  corpoSL().lastElementChild.querySelector("input").focus();
+};
+$("#btn-sl-limpar").onclick = () => {
+  corpoSL().innerHTML = ""; garantirLinhaVazia(); previaStarlink();
+};
 
 $("#sl-clickup").onchange = (e) => {
   $("#cartao-clickup").hidden = !e.target.checked;
@@ -620,7 +690,9 @@ async function executar(simulacao) {
     quantos = dados.seriais.length;
 
   } else if (estado.aba === "starlink") {
-    dados.seriais = linhasDe("sl-seriais");
+    // O motor continua recebendo texto: a tabela so facilita digitar.
+    dados.seriais = itensStarlink().map(
+      (i) => [i.serial, i.patrimonio, i.kit].filter(Boolean).join("\t"));
     dados.prefixo = $("#prefixo-sl .ativa").dataset.valor;
     dados.trackit = $("#sl-trackit").checked;
     dados.clickup = $("#sl-clickup").checked;
@@ -753,6 +825,7 @@ async function iniciar(comPonte) {
   let tema = "escuro";
   try { tema = localStorage.getItem("tema") || "escuro"; } catch (e) { /* ignora */ }
   aplicarTema(tema);
+  garantirLinhaVazia();
   atualizarPrevia(); previaStarlink(); contarDev(); buscarBordo();
 
   if (!comPonte) {
