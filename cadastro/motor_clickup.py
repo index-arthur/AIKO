@@ -36,6 +36,7 @@ LISTA_ATIVOS = "901327205770"
 CAMPO_TIPO = "5cf19fbc-614b-4692-a287-f21a9ad4dfc3"
 CAMPO_SERIE = "9a75dc1c-0c0c-447a-8d00-4d2bce08ec29"
 CAMPO_PATRIMONIO = "fea60991-a140-476e-abf8-06b4ac7785c3"
+CAMPO_KIT = "1522f21c-75d9-41d4-b8ab-83dcc43664e1"
 CAMPO_TRACKIT = "5e8e3485-608d-4c91-b5a3-87094a02e710"
 TRACKIT_SIM = "5228e41e-17e2-4b8f-97bb-0ddb712de444"
 
@@ -191,6 +192,7 @@ class ClickUp:
                               "serie": (campos.get(CAMPO_SERIE) or "").strip(),
                               "patrimonio":
                                   str(campos.get(CAMPO_PATRIMONIO) or "").strip(),
+                              "kit": str(campos.get(CAMPO_KIT) or "").strip(),
                               "status": (t.get("status") or {}).get("status")})
             if r.get("last_page") or not r.get("tasks"):
                 return cards
@@ -248,16 +250,39 @@ def formatar_nome(prefixo, numero):
 
 def ler_linhas(bruto):
     """
-    Cada linha: o S/N e, opcionalmente, o patrimonio ao lado (colado do
-    Excel vem separado por tab). Devolve [{serial, patrimonio}].
+    Cada linha traz o S/N e, opcionalmente, o patrimonio e o KIT ao lado
+    (colado do Excel vem separado por tab). Devolve
+    [{serial, patrimonio, kit}].
+
+    Quem manda e o FORMATO, nao a posicao - assim a ordem das colunas nao
+    importa e esquecer o patrimonio nao faz o KIT cair no campo errado:
+
+        so digitos            -> patrimonio  (os 446 do board sao numericos)
+        comeca com K          -> KIT         (KIT... ou KFV...; 253 dos 258)
+        o que sobrar          -> S/N         (nenhum S/N do board comeca com K)
+
+    KIT fora desse padrao existe so em cards antigos de outros ativos
+    ('desconhecido', UUID); nesses casos o segundo texto nao-numerico da
+    linha ainda e tratado como KIT.
     """
     itens = []
     for ln in bruto.splitlines():
         partes = [p for p in re.split(r"[\s;,]+", ln.strip()) if p]
         if not partes:
             continue
-        itens.append({"serial": partes[0],
-                      "patrimonio": partes[1] if len(partes) > 1 else ""})
+        serial = patrimonio = kit = ""
+        for p in partes:
+            if p.isdigit() and not patrimonio:
+                patrimonio = p
+            elif p[:1].upper() == "K" and not kit:
+                kit = p
+            elif not serial:
+                serial = p
+            elif not kit:
+                kit = p
+        if serial or patrimonio or kit:
+            itens.append({"serial": serial, "patrimonio": patrimonio,
+                          "kit": kit})
     return itens
 
 
@@ -278,7 +303,7 @@ def planejar(cards, itens, prefixo):
     """
     Funcao pura. Devolve (acoes, problemas).
 
-    acoes - [{acao: 'criar'|'atualizar', nome, card_id, serial, patrimonio}]
+    acoes - [{acao, nome, card_id, serial, patrimonio, kit}]
     """
     problemas = []
     if prefixo not in TIPO_OPCAO:
@@ -310,13 +335,28 @@ def planejar(cards, itens, prefixo):
         problemas.append("Patrimonio repetido na lista: {}".format(
             ", ".join(sorted(set(pat_repetidos)))))
 
+    vistos_kit, kit_repetidos = set(), []
+    for it in itens:
+        k = _chave(it.get("kit"))
+        if not k:
+            continue
+        if k in vistos_kit:
+            kit_repetidos.append(it["kit"])
+        vistos_kit.add(k)
+    if kit_repetidos:
+        problemas.append("KIT repetido na lista: {}".format(
+            ", ".join(sorted(set(kit_repetidos)))))
+
     por_serie = {}
     por_patrimonio = {}
+    por_kit = {}
     for c in cards:
         if c["serie"]:
             por_serie.setdefault(_chave(c["serie"]), []).append(c)
         if c.get("patrimonio"):
             por_patrimonio.setdefault(_chave(c["patrimonio"]), []).append(c)
+        if c.get("kit"):
+            por_kit.setdefault(_chave(c["kit"]), []).append(c)
 
     proximo = ultimo_numero(cards, prefixo)
     acoes = []
@@ -344,6 +384,19 @@ def planejar(cards, itens, prefixo):
                     "outro card" if len(donos) == 1 else
                     "{} cards".format(len(donos)),
                     ", ".join(c["nome"] for c in donos[:3]),
+                    it["serial"]))
+            continue
+
+        # KIT e identificador de caixa: mesma regra do patrimonio.
+        donos_kit = [c for c in por_kit.get(_chave(it.get("kit")), [])
+                     if c["id"] != meu_card]
+        if it.get("kit") and donos_kit:
+            problemas.append(
+                "KIT {} ja esta em {}: {} (S/N {})".format(
+                    it["kit"],
+                    "outro card" if len(donos_kit) == 1 else
+                    "{} cards".format(len(donos_kit)),
+                    ", ".join(c["nome"] for c in donos_kit[:3]),
                     it["serial"]))
             continue
 
@@ -393,7 +446,10 @@ def executar_clickup(dados, log, dry_run=False, progresso=None):
     log("ClickUp: {} card(s) novo(s), {} a atualizar.".format(
         len(novos), len(acoes) - len(novos)))
     for a in acoes:
-        extra = "  patrimonio {}".format(a["patrimonio"]) if a["patrimonio"] else ""
+        extra = "".join([
+            "  patrimonio {}".format(a["patrimonio"]) if a["patrimonio"] else "",
+            "  KIT {}".format(a["kit"]) if a.get("kit") else "",
+        ])
         log("  {:<9} {:<8} S/N {}{}".format(
             "CRIAR" if a["acao"] == "criar" else "ATUALIZAR", a["nome"],
             a["serial"], extra))
@@ -418,6 +474,10 @@ def executar_clickup(dados, log, dry_run=False, progresso=None):
             gravar.append({"campo": {"id": CAMPO_PATRIMONIO, "tipo": "texto",
                                      "rotulo": "Nº PATRIMÔNIO"},
                            "valor": a["patrimonio"], "texto": a["patrimonio"]})
+        if a.get("kit"):
+            gravar.append({"campo": {"id": CAMPO_KIT, "tipo": "texto",
+                                     "rotulo": "STARLINK KIT"},
+                           "valor": a["kit"], "texto": a["kit"]})
         try:
             if a["acao"] == "criar":
                 corpo = {

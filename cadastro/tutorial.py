@@ -90,8 +90,14 @@ conferência na simulação é o que evita isso.
 
 ABA STARLINK:
 
-Cole os S/N dos kits, um por linha. Se quiser, o patrimônio vai na mesma
-linha, ao lado (colado do Excel já vem assim).
+Cole os S/N dos kits, um por linha. Na mesma linha podem vir também o
+patrimônio e o código do KIT, em qualquer ordem (colado do Excel já vem
+assim). A automação reconhece pelo formato: só números é patrimônio, o que
+começa com K é o KIT, o resto é o S/N.
+
+Patrimônio e KIT são gravados só no ClickUp; o TracKit leva o S/N sozinho.
+Os dois são conferidos contra o board: repetido na lista, ou já usado em
+outro card, para o lote antes de gravar.
 
 Marque onde gravar: TracKit, ClickUp ou os dois.
 

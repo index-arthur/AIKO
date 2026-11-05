@@ -332,11 +332,19 @@ $("#seriais").addEventListener("input", () => {
 /* ---------------------------------------------------------- starlink -- */
 
 function itensStarlink() {
-  // Cada linha e "S/N [patrimonio]" - colado do Excel vem separado por tab.
-  // O patrimonio e so do ClickUp; o TracKit leva o serial sozinho.
+  // Espelha o ler_linhas do motor: quem manda e o FORMATO, nao a posicao.
+  //   so digitos   -> patrimonio      comeca com K -> KIT      resto -> S/N
+  // Patrimonio e KIT sao do ClickUp; o TracKit leva o serial sozinho.
   return linhasDe("sl-seriais").map((ln) => {
     const partes = ln.split(/[\s;,]+/).filter(Boolean);
-    return { serial: partes[0] || "", patrimonio: partes[1] || "" };
+    const it = { serial: "", patrimonio: "", kit: "" };
+    partes.forEach((p) => {
+      if (/^\d+$/.test(p) && !it.patrimonio) it.patrimonio = p;
+      else if (p[0] && p[0].toUpperCase() === "K" && !it.kit) it.kit = p;
+      else if (!it.serial) it.serial = p;
+      else if (!it.kit) it.kit = p;
+    });
+    return it;
   }).filter((i) => i.serial);
 }
 
@@ -344,11 +352,14 @@ function previaStarlink() {
   const itens = itensStarlink();
   const pref = $("#prefixo-sl .ativa").dataset.valor;
   if (!itens.length) { $("#previa-sl").textContent = ""; return; }
+  // mostra o que foi reconhecido, para dar para conferir antes de gravar
   const comPat = itens.filter((i) => i.patrimonio).length;
-  // mostra que o patrimonio foi reconhecido e nao vai parar no nome
-  const nota = comPat
-    ? ` · ${comPat} com patrimônio (só o ClickUp usa)`
-    : "";
+  const comKit = itens.filter((i) => i.kit).length;
+  const extras = [];
+  if (comPat) extras.push(`${comPat} com patrimônio`);
+  if (comKit) extras.push(`${comKit} com KIT`);
+  const nota = extras.length
+    ? ` · ${extras.join(" e ")} (só o ClickUp usa)` : "";
   $("#previa-sl").textContent =
     `${itens.length} kit(s) · o 1º ficará: ${pref} - ${itens[0].serial}${nota}`;
 }
