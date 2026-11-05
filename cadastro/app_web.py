@@ -31,6 +31,7 @@ from motor_starlink import executar_starlink
 from motor_devolucao import executar_devolucao
 from trackit_api_client import TrackitClient, obter_sessao
 import cofre
+import tutorial
 from atualizador import (
     VERSION, RELEASES_URL, MODO_TESTE_UPDATE,
     checar_atualizacao, baixar_nova_versao, aplicar_atualizacao,
@@ -239,8 +240,7 @@ class Ponte:
             return {"ok": False, "erro": str(e)}
 
     def tutorial(self):
-        webbrowser.open(RELEASES_URL)
-        return {"ok": True}
+        return {"ok": True, "texto": tutorial.TEXTO}
 
     # ---------- atualizacao ----------
     def checar_update(self):

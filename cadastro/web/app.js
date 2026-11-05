@@ -581,7 +581,12 @@ async function executar(simulacao) {
 $("#btn-executar").onclick = () => executar(false);
 $("#btn-simular").onclick  = () => executar(true);
 $("#btn-limpar-log").onclick = () => { $("#log").innerHTML = ""; };
-$("#btn-tutorial").onclick = () => chamar("tutorial");
+$("#btn-tutorial").onclick = async () => {
+  const r = await chamar("tutorial");
+  $("#dlg-tutorial-texto").textContent =
+    (r && r.texto) || "Não consegui carregar a ajuda.";
+  $("#dlg-tutorial").showModal();
+};
 $("#btn-depois").onclick = () => { $("#banner-update").hidden = true; };
 $("#btn-atualizar").onclick = () => chamar("atualizar");
 
@@ -606,6 +611,8 @@ function esbocoResponder(metodo, args) {
                                  equipamento: "Pipa " + String(i + 1).padStart(2, "0") })),
       ] });
   }
+  if (metodo === "tutorial")
+    return Promise.resolve({ ok: true, texto: "A ajuda vem do Python — no modo esboço ela não está disponível." });
   if (metodo === "inicio") return Promise.resolve({ ok: true, versao: "8.0 (esboço)" });
   if (metodo === "login_guardado") return Promise.resolve({ ok: true, tem: false });
   if (metodo === "clickup_conectar") {

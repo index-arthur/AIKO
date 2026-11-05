@@ -313,3 +313,14 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 18px 0
 .campos-cu select { width: 100%; padding: 8px 10px; background: var(--superficie);
   color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; font: inherit; }
 .campos-cu :disabled { opacity: .5; }
+
+/* ------------------------------------------------------------ ajuda -- */
+#dlg-tutorial { min-width: min(720px, 94vw); }
+.ajuda {
+  max-height: min(62vh, 560px); overflow-y: auto;
+  margin: 0; padding: 12px 14px;
+  background: var(--superficie); border: 1px solid var(--borda);
+  border-radius: 6px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+  line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere;
+}
