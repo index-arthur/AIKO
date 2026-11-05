@@ -326,12 +326,26 @@ $("#seriais").addEventListener("input", () => {
 
 /* ---------------------------------------------------------- starlink -- */
 
+function itensStarlink() {
+  // Cada linha e "S/N [patrimonio]" - colado do Excel vem separado por tab.
+  // O patrimonio e so do ClickUp; o TracKit leva o serial sozinho.
+  return linhasDe("sl-seriais").map((ln) => {
+    const partes = ln.split(/[\s;,]+/).filter(Boolean);
+    return { serial: partes[0] || "", patrimonio: partes[1] || "" };
+  }).filter((i) => i.serial);
+}
+
 function previaStarlink() {
-  const s = linhasDe("sl-seriais");
+  const itens = itensStarlink();
   const pref = $("#prefixo-sl .ativa").dataset.valor;
-  $("#previa-sl").textContent = s.length
-    ? `${s.length} kit(s) · o 1º ficará: ${pref} - ${s[0].split(/[\s;,]+/)[0]}`
+  if (!itens.length) { $("#previa-sl").textContent = ""; return; }
+  const comPat = itens.filter((i) => i.patrimonio).length;
+  // mostra que o patrimonio foi reconhecido e nao vai parar no nome
+  const nota = comPat
+    ? ` · ${comPat} com patrimônio (só o ClickUp usa)`
     : "";
+  $("#previa-sl").textContent =
+    `${itens.length} kit(s) · o 1º ficará: ${pref} - ${itens[0].serial}${nota}`;
 }
 $("#sl-seriais").addEventListener("input", previaStarlink);
 

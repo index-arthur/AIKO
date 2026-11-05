@@ -332,9 +332,18 @@ class Ponte:
         Gravar no board um kit que nao entrou no TracKit cria um cadastro
         que ninguem consegue casar depois.
         """
+        # Uma lista so para os dois destinos. O patrimonio vem colado ao
+        # lado do S/N (e assim que sai do Excel), mas quem usa patrimonio e
+        # o ClickUp - o TracKit leva so o serial. Mandar a linha inteira
+        # criaria o equipamento "SM - M1HT...RPZ  12345", com o patrimonio
+        # grudado no nome.
+        itens = mcu.ler_linhas("\n".join(d.get("seriais") or []))
+
         resumo = None
         if d.get("trackit"):
-            resumo = executar_starlink(d, log=self.log, dry_run=simulacao,
+            so_seriais = dict(d, seriais=[i["serial"] for i in itens])
+            resumo = executar_starlink(so_seriais, log=self.log,
+                                       dry_run=simulacao,
                                        progresso=self.progresso)
             if resumo.get("falhas") or resumo.get("problemas"):
                 self.log("ClickUp nao vai rodar: o TracKit nao saiu limpo.",
@@ -370,7 +379,7 @@ class Ponte:
         mcu.executar_clickup({
             "token": token,
             "prefixo": d.get("prefixo"),
-            "itens": mcu.ler_linhas("\n".join(d.get("seriais") or [])),
+            "itens": itens,
             "campos": campos,
             "status_card": (status or {}).get("valor") or None,
             # So marca "cadastrado no TracKit" quando ele REALMENTE acabou de
