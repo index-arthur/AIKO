@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 cadastro/_build/
 cadastro/_setup/
+
+# gerado pelo gerar_esboco: HTML com CSS e JS embutidos, so para revisao
+cadastro/web/esboco.html

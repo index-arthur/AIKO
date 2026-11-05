@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadastro de Bordo - Aiko</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<header class="topo">
+  <div class="marca">
+    <span class="ponto"></span>
+    <h1>Cadastro de Bordo</h1>
+    <span class="versao" id="versao">v8.0</span>
+  </div>
+  <div class="topo-acoes">
+    <span class="chip" id="chip-conexao" data-estado="off">não conectado</span>
+    <button class="icone" id="btn-tema" title="Alternar tema">◐</button>
+  </div>
+</header>
+
+<!-- Banner de atualização: escondido até haver versão nova -->
+<div class="banner" id="banner-update" hidden>
+  <span id="banner-texto"></span>
+  <button class="link" id="btn-atualizar">Atualizar agora</button>
+  <button class="link discreto" id="btn-depois">Depois</button>
+</div>
+
+<main class="corpo">
+
+  <!-- ============ coluna da esquerda: formulário ============ -->
+  <section class="painel">
+
+    <fieldset class="cartao">
+      <legend>Acesso</legend>
+      <div class="grade">
+        <label for="empresa">Empresa</label>
+        <input id="empresa" placeholder="sigla do cliente (ex: VAF)" autocomplete="off">
+
+        <label for="usuario">Usuário</label>
+        <div class="com-sufixo">
+          <input id="usuario" placeholder="seu.usuario" autocomplete="username">
+          <span class="sufixo">@aiko.digital</span>
+        </div>
+
+        <label for="senha">Senha</label>
+        <div class="linha">
+          <input id="senha" type="password" autocomplete="current-password">
+          <button class="secundario" id="btn-olho" type="button">ver</button>
+        </div>
+
+        <span></span>
+        <div class="linha">
+          <button class="primario" id="btn-conectar">Conectar</button>
+          <span class="dica" id="dica-conexao"></span>
+        </div>
+      </div>
+    </fieldset>
+
+    <nav class="abas" role="tablist">
+      <button class="aba ativa" data-aba="cadastro" role="tab">Cadastro de Bordo</button>
+      <button class="aba" data-aba="vinculacao" role="tab">Vinculação</button>
+      <button class="aba" data-aba="starlink"   role="tab">Starlink</button>
+      <button class="aba" data-aba="devolucao"  role="tab">Devolução</button>
+    </nav>
+
+    <!-- ---------- aba 1: cadastro ---------- -->
+    <div class="conteudo-aba ativa" data-aba="cadastro">
+      <fieldset class="cartao">
+        <legend>Cadastros do cliente</legend>
+        <div class="grade">
+          <label>Modelo</label>
+          <button class="seletor" id="sel-modelo" data-chave="modelo" disabled>Conecte para escolher</button>
+          <label>Grupo</label>
+          <button class="seletor" id="sel-grupo" data-chave="grupo" disabled>Conecte para escolher</button>
+          <label>Perfil de rede</label>
+          <button class="seletor" id="sel-perfil" data-chave="perfil" disabled>Conecte para escolher</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="cartao">
+        <legend>Lote</legend>
+        <div class="grade">
+          <label>Nome</label>
+          <div class="segmentado" id="modo-nome">
+            <button type="button" class="ativa" data-valor="montado">Montado</button>
+            <button type="button" data-valor="livre">Livre</button>
+          </div>
+        </div>
+
+        <!-- nome livre: escreve a base, a automação numera -->
+        <div class="grade" id="grade-livre" hidden>
+          <label for="nome-livre">Texto</label>
+          <div>
+            <input id="nome-livre" placeholder="o nome como você quiser" autocomplete="off">
+            <p class="dica">A automação acrescenta <code>| 01</code>, <code>| 02</code>…
+               A numeração continua valendo para "Parou no bordo" e para a Vinculação.</p>
+          </div>
+        </div>
+
+        <div class="grade" id="grade-montado">
+          <label for="equipamento">Equipamento</label>
+          <input id="equipamento" value="COMODATO" autocomplete="off">
+
+          <label for="ticket">Ticket</label>
+          <div class="linha">
+            <div class="segmentado" id="prefixo-ticket">
+              <button type="button" class="ativa" data-valor="HWS">HWS</button>
+              <button type="button" data-valor="SP">SP</button>
+            </div>
+            <input id="ticket" placeholder="12312 ou HWS-12312" autocomplete="off">
+          </div>
+
+          <label for="zendesk">Zendesk</label>
+          <input id="zendesk" placeholder="opcional" autocomplete="off">
+        </div>
+
+        <!-- a sequência vale nos dois modos -->
+        <div class="grade">
+          <label for="parou">Parou no bordo</label>
+          <input id="parou" value="0" inputmode="numeric" autocomplete="off">
+
+          <label for="limite">Qtd. total</label>
+          <input id="limite" placeholder="quantos bordos no total" inputmode="numeric" autocomplete="off">
+
+          <span></span>
+          <div class="previa">
+            <code id="previa-nome">—</code>
+            <button class="secundario" id="btn-copiar-nomes">Copiar nomes</button>
+          </div>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- ---------- aba 2: vinculação ---------- -->
+    <div class="conteudo-aba" data-aba="vinculacao">
+      <fieldset class="cartao">
+        <legend>Vincular bordos aos equipamentos</legend>
+        <div class="grade">
+          <label for="filtro">Filtro</label>
+          <div>
+            <input id="filtro" placeholder="ex: HWS-6848" autocomplete="off">
+            <p class="dica">Pega os equipamentos do lote, em ordem.</p>
+          </div>
+
+          <label for="seriais">Seriais</label>
+          <div>
+            <textarea id="seriais" rows="8" spellcheck="false"
+                      placeholder="um serial por linha"></textarea>
+            <p class="dica"><span id="conta-seriais"></span></p>
+          </div>
+        </div>
+        <p class="nota">
+          O pareamento é <strong>posicional</strong>: o 1º serial vai para o
+          equipamento 01, o 2º para o 02, e assim por diante. Dá para vincular
+          parte do lote agora e o resto depois — os que já têm device saem da
+          fila sozinhos.
+        </p>
+      </fieldset>
+    </div>
+
+    <!-- ---------- aba 3: starlink ---------- -->
+    <div class="conteudo-aba" data-aba="starlink">
+      <fieldset class="cartao">
+        <legend>Cadastrar Starlink</legend>
+        <div class="grade">
+          <label>Modelo do kit</label>
+          <div class="segmentado" id="prefixo-sl">
+            <button type="button" class="ativa" data-valor="SM">Starlink Mini (SM)</button>
+            <button type="button" data-valor="SV">Starlink V4 (SV)</button>
+          </div>
+
+          <label for="sl-seriais">S/N dos kits</label>
+          <div>
+            <textarea id="sl-seriais" rows="7" spellcheck="false"
+                      placeholder="um S/N por linha — patrimônio pode vir ao lado"></textarea>
+            <p class="dica" id="previa-sl"></p>
+          </div>
+
+          <label>Gravar em</label>
+          <div class="linha">
+            <label class="caixa"><input type="checkbox" id="sl-trackit" checked> TracKit</label>
+            <label class="caixa"><input type="checkbox" id="sl-clickup"> ClickUp (Ativos TI)</label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="cartao" id="cartao-clickup" hidden>
+        <legend>ClickUp — board Ativos TI</legend>
+        <div class="linha espaco">
+          <button class="secundario" id="btn-cu-conectar">Conectar ClickUp</button>
+          <button class="secundario" id="btn-cu-token">Trocar token</button>
+          <span class="dica" id="dica-cu">não conectado</span>
+        </div>
+        <p class="nota">Só os campos marcados são gravados.</p>
+        <div class="grade campos-cu" id="campos-cu">
+          <!-- preenchido pelo app.js -->
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- ---------- aba 4: devolução ---------- -->
+    <div class="conteudo-aba" data-aba="devolucao">
+      <fieldset class="cartao">
+        <legend>Procurar bordo</legend>
+        <input id="busca-dev" placeholder="últimos caracteres do device, ticket ou nome do equipamento"
+               autocomplete="off">
+        <div class="tabela-rolavel">
+          <table class="tabela" id="tabela-dev">
+            <thead><tr><th>DeviceID</th><th>Equipamento atual</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="linha espaco">
+          <button class="secundario" id="btn-copiar-device">Copiar deviceID</button>
+          <button class="secundario" id="btn-copiar-reserva">Copiar nome da Reserva</button>
+          <button class="secundario" id="btn-add-lista">Adicionar à lista</button>
+          <span class="dica" id="dica-busca"></span>
+        </div>
+      </fieldset>
+
+      <fieldset class="cartao">
+        <legend>Desvincular</legend>
+        <textarea id="dev-lista" rows="6" spellcheck="false"
+                  placeholder="um deviceID por linha"></textarea>
+        <p class="dica" id="conta-dev"></p>
+
+        <div class="opcoes">
+          <label class="radio"><input type="radio" name="acao-dev" value="desvincular" checked>
+            Só desvincular <span class="dica">(deixa o bordo "Não associado")</span></label>
+          <label class="radio"><input type="radio" name="acao-dev" value="excluir">
+            Desvincular e <strong>EXCLUIR</strong> o equipamento</label>
+          <label class="caixa perigo"><input type="checkbox" id="forcar-ativos">
+            Desvincular mesmo os que ainda comunicam (perigoso)</label>
+        </div>
+
+        <p class="nota">
+          Antes de gravar, a automação pergunta ao TracKit quando cada
+          equipamento comunicou pela última vez. Se falou nos últimos
+          <strong>30 dias</strong>, a máquina está em campo e o lote para —
+          desvincular faria ela parar de guardar dados sem ninguém perceber.
+        </p>
+      </fieldset>
+    </div>
+
+  </section>
+
+  <!-- ============ coluna da direita: log ============ -->
+  <section class="painel log-painel">
+    <div class="log-topo">
+      <h2>Log</h2>
+      <button class="icone" id="btn-limpar-log" title="Limpar">⌫</button>
+    </div>
+    <pre class="log" id="log"></pre>
+  </section>
+
+</main>
+
+<footer class="rodape">
+  <div class="progresso" id="progresso"><div class="barra" id="barra"></div></div>
+  <div class="rodape-acoes">
+    <button class="secundario" id="btn-tutorial">Tutorial</button>
+    <span class="espacador"></span>
+    <button class="secundario" id="btn-simular">Simular</button>
+    <button class="primario" id="btn-executar">Cadastrar</button>
+  </div>
+</footer>
+
+<!-- janela de escolha (modelo/grupo/perfil) -->
+<dialog id="dlg-escolha">
+  <form method="dialog">
+    <h3 id="dlg-escolha-titulo">Escolher</h3>
+    <input id="dlg-escolha-busca" placeholder="filtrar..." autocomplete="off">
+    <ul class="lista" id="dlg-escolha-lista"></ul>
+    <menu>
+      <button class="secundario" value="">Cancelar</button>
+      <button class="primario" id="dlg-escolha-ok" value="ok">Usar este</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- confirmação dura da exclusão -->
+<dialog id="dlg-excluir">
+  <form method="dialog">
+    <h3>Excluir equipamentos</h3>
+    <p id="dlg-excluir-texto"></p>
+    <p class="nota perigo">Isso não tem desfazer. O histórico do equipamento vai
+       junto. Só será excluído o que ficar sem nenhum bordo.</p>
+    <label for="dlg-excluir-campo">Digite <code>EXCLUIR</code> para confirmar:</label>
+    <input id="dlg-excluir-campo" autocomplete="off">
+    <menu>
+      <button class="secundario" value="">Cancelar</button>
+      <button class="perigo" id="dlg-excluir-ok" value="ok" disabled>Excluir</button>
+    </menu>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

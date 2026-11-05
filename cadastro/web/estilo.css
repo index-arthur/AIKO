@@ -1,0 +1,315 @@
+/* ==========================================================================
+   Cadastro de Bordo - Aiko
+
+   Duas colunas em tela larga (formulario | log) e uma coluna em tela
+   estreita. Era essa a dor do Tk: a janela nascia maior que o monitor do
+   notebook e o Log, que e onde a automacao conta o que fez, era o que
+   sumia. Aqui o log tem coluna propria em tela larga e vai para baixo
+   quando nao cabe - nos dois casos continua visivel.
+   ========================================================================== */
+
+:root {
+  --bg:        #1c1c1c;
+  --superficie:#242424;
+  --cartao:    #2b2b2b;
+  --borda:     #383838;
+  --texto:     #f2f2f2;
+  --suave:     #9a9a9a;
+  --destaque:  #0b7ad4;
+  --destaque-2:#1a8ae6;
+  --ok:        #6ccb5f;
+  --erro:      #ff6b6b;
+  --aviso:     #ffd966;
+  --raio: 8px;
+  --sombra: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.25);
+}
+
+:root[data-tema="claro"] {
+  --bg:        #f3f3f3;
+  --superficie:#fafafa;
+  --cartao:    #ffffff;
+  --borda:     #e0e0e0;
+  --texto:     #1b1b1b;
+  --suave:     #666;
+  --destaque:  #0b7ad4;
+  --destaque-2:#0969b8;
+  --ok:        #1a7f37;
+  --erro:      #c42b1c;
+  --aviso:     #9a6700;
+  --sombra: 0 1px 2px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+}
+
+* { box-sizing: border-box; }
+
+/* O atributo hidden vale display:none do navegador, que QUALQUER display
+   numa classe derruba - e foi o que aconteceu com o banner de atualizacao
+   e o cartao do ClickUp, que nasciam visiveis. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--texto);
+  font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  /* a janela inteira nunca rola: quem rola e cada painel */
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- topo -- */
+.topo {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 20px;
+  border-bottom: 1px solid var(--borda);
+  background: var(--superficie);
+  flex: 0 0 auto;
+}
+.marca { display: flex; align-items: baseline; gap: 10px; }
+.marca h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+.ponto {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--destaque); align-self: center;
+}
+.versao { color: var(--suave); font-size: 12px; }
+.topo-acoes { display: flex; align-items: center; gap: 10px; }
+
+.chip {
+  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--borda); color: var(--suave);
+  white-space: nowrap;
+}
+.chip[data-estado="on"]  { color: var(--ok);  border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.chip[data-estado="erro"]{ color: var(--erro);border-color: color-mix(in srgb, var(--erro) 45%, transparent); }
+.chip[data-estado="indo"]{ color: var(--aviso); }
+
+/* ------------------------------------------------------------- banner -- */
+.banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 20px; background: #3a3500; color: var(--aviso);
+  border-bottom: 1px solid var(--borda); flex: 0 0 auto; font-size: 13px;
+}
+:root[data-tema="claro"] .banner { background: #fff8c5; color: #7a5c00; }
+
+/* -------------------------------------------------------------- corpo -- */
+.corpo {
+  flex: 1 1 auto; min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
+  gap: 16px; padding: 16px 20px;
+}
+/* Em tela estreita vira uma coluna so, e o log vai para baixo com altura
+   propria - continua visivel sem empurrar o rodape para fora. */
+@media (max-width: 920px) {
+  .corpo { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) minmax(140px, 34%); }
+}
+
+.painel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.painel { scrollbar-width: thin; scrollbar-color: var(--borda) transparent; }
+.painel::-webkit-scrollbar { width: 10px; }
+.painel::-webkit-scrollbar-thumb {
+  background: var(--borda); border-radius: 999px;
+  border: 3px solid transparent; background-clip: content-box;
+}
+
+/* ------------------------------------------------------------- cartao -- */
+.cartao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 14px 16px 16px;
+  margin: 0 0 14px;
+  box-shadow: var(--sombra);
+}
+.cartao legend {
+  padding: 0 6px; margin-left: -6px;
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--suave);
+}
+
+.grade {
+  display: grid; grid-template-columns: 136px minmax(0, 1fr);
+  gap: 10px 14px; align-items: center;
+}
+.grade > label { color: var(--suave); font-size: 13px; }
+.grade > label:has(+ div textarea),
+.grade > label[for$="seriais"] { align-self: start; padding-top: 7px; }
+
+@media (max-width: 560px) {
+  .grade { grid-template-columns: 1fr; gap: 4px 0; }
+  .grade > label { padding-top: 8px; }
+}
+
+/* ------------------------------------------------------------ campos --- */
+input[type="text"], input:not([type]), input[type="password"], textarea, .seletor {
+  width: 100%; padding: 8px 10px;
+  background: var(--superficie); color: var(--texto);
+  border: 1px solid var(--borda); border-radius: 6px;
+  font: inherit; outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+textarea { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; resize: vertical; }
+input:focus, textarea:focus, .seletor:focus-visible {
+  border-color: var(--destaque);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--destaque) 25%, transparent);
+}
+input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--suave) 80%, transparent); }
+
+.com-sufixo { position: relative; }
+.com-sufixo .sufixo {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--suave); font-size: 12px; pointer-events: none;
+}
+.com-sufixo input { padding-right: 96px; }
+
+.linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.linha.espaco { gap: 8px; margin-top: 10px; }
+.linha > input { flex: 1 1 140px; }
+.espacador { flex: 1 1 auto; }
+
+.dica { color: var(--suave); font-size: 12px; margin: 4px 0 0; }
+.nota {
+  color: var(--suave); font-size: 12.5px; margin: 12px 0 0;
+  padding-left: 10px; border-left: 2px solid var(--borda);
+}
+.nota.perigo { border-left-color: var(--erro); color: var(--erro); }
+
+.caixa, .radio { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 13px; }
+.caixa.perigo { color: var(--erro); }
+.opcoes { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--destaque); width: 15px; height: 15px; }
+
+.previa { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.previa code {
+  flex: 1 1 220px; color: var(--suave); font-size: 12.5px;
+  font-family: Consolas, monospace; overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------ botoes --- */
+button { font: inherit; cursor: pointer; border-radius: 6px; transition: background .12s, border-color .12s; }
+.primario {
+  background: var(--destaque); color: #fff; border: 1px solid transparent;
+  padding: 8px 18px; font-weight: 600;
+}
+.primario:hover { background: var(--destaque-2); }
+.secundario {
+  background: var(--superficie); color: var(--texto);
+  border: 1px solid var(--borda); padding: 7px 14px;
+}
+.secundario:hover { border-color: var(--suave); }
+button.perigo {
+  background: var(--erro); color: #fff; border: 1px solid transparent;
+  padding: 8px 18px; font-weight: 600;
+}
+button:disabled { opacity: .45; cursor: default; }
+.icone {
+  background: transparent; border: 1px solid transparent; color: var(--suave);
+  width: 30px; height: 30px; line-height: 1; font-size: 15px;
+}
+.icone:hover { border-color: var(--borda); color: var(--texto); }
+.link { background: none; border: none; color: inherit; text-decoration: underline; padding: 0 2px; }
+.link.discreto { opacity: .7; }
+
+.seletor { text-align: left; }
+.seletor:not(:disabled):hover { border-color: var(--suave); }
+
+/* --------------------------------------------------------- segmentado -- */
+.segmentado { display: inline-flex; border: 1px solid var(--borda); border-radius: 6px; overflow: hidden; }
+.segmentado button {
+  background: var(--superficie); color: var(--suave);
+  border: none; border-radius: 0; padding: 7px 14px; font-size: 13px;
+}
+.segmentado button + button { border-left: 1px solid var(--borda); }
+.segmentado button.ativa { background: var(--destaque); color: #fff; font-weight: 600; }
+
+/* --------------------------------------------------------------- abas -- */
+.abas { display: flex; gap: 4px; margin: 0 0 14px; flex-wrap: wrap; }
+.aba {
+  background: transparent; border: 1px solid transparent; color: var(--suave);
+  padding: 7px 14px; font-size: 13px;
+}
+.aba:hover { color: var(--texto); }
+.aba.ativa { background: var(--cartao); border-color: var(--borda); color: var(--texto); font-weight: 600; }
+.conteudo-aba { display: none; }
+.conteudo-aba.ativa { display: block; }
+
+/* ------------------------------------------------------------- tabela -- */
+.tabela-rolavel {
+  margin-top: 10px; max-height: 230px; overflow-y: auto;
+  border: 1px solid var(--borda); border-radius: 6px;
+}
+.tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tabela th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--superficie); color: var(--suave);
+  text-align: left; font-weight: 600; font-size: 12px;
+  padding: 7px 10px; border-bottom: 1px solid var(--borda);
+}
+.tabela td { padding: 6px 10px; border-bottom: 1px solid color-mix(in srgb, var(--borda) 55%, transparent); }
+.tabela tbody tr { cursor: pointer; }
+.tabela tbody tr:hover { background: color-mix(in srgb, var(--destaque) 12%, transparent); }
+.tabela tbody tr.escolhida { background: color-mix(in srgb, var(--destaque) 25%, transparent); }
+.tabela td:first-child { font-family: Consolas, monospace; white-space: nowrap; }
+.tabela .vazio { color: var(--suave); font-style: italic; }
+
+/* ---------------------------------------------------------------- log -- */
+.log-painel {
+  display: flex; flex-direction: column;
+  background: var(--cartao); border: 1px solid var(--borda);
+  border-radius: var(--raio); overflow: hidden; box-shadow: var(--sombra);
+}
+.log-topo {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--borda); flex: 0 0 auto;
+}
+.log-topo h2 {
+  margin: 0; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--suave);
+}
+.log {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin: 0; padding: 10px 12px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+  line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.log .ok    { color: var(--ok); }
+.log .erro  { color: var(--erro); }
+.log .aviso { color: var(--aviso); }
+.log .info  { color: var(--suave); }
+
+/* ------------------------------------------------------------- rodape -- */
+.rodape { flex: 0 0 auto; border-top: 1px solid var(--borda); background: var(--superficie); }
+.progresso { height: 3px; background: var(--borda); }
+.barra { height: 100%; width: 0; background: var(--destaque); transition: width .15s linear; }
+.rodape-acoes { display: flex; align-items: center; gap: 8px; padding: 12px 20px; }
+
+/* ------------------------------------------------------------ dialogo -- */
+dialog {
+  border: 1px solid var(--borda); border-radius: 10px;
+  background: var(--cartao); color: var(--texto);
+  padding: 0; box-shadow: 0 12px 48px rgba(0,0,0,.5);
+  min-width: min(460px, 92vw); max-width: 92vw;
+}
+dialog::backdrop { background: rgba(0,0,0,.5); }
+dialog form { padding: 18px 20px 16px; }
+dialog h3 { margin: 0 0 12px; font-size: 15px; }
+dialog p { margin: 0 0 10px; }
+dialog label { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--suave); }
+dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 18px 0 0; padding: 0; }
+
+.lista {
+  list-style: none; margin: 10px 0 0; padding: 0;
+  max-height: 300px; overflow-y: auto;
+  border: 1px solid var(--borda); border-radius: 6px;
+}
+.lista li { padding: 7px 10px; cursor: pointer; font-size: 13px; }
+.lista li:hover { background: color-mix(in srgb, var(--destaque) 12%, transparent); }
+.lista li.escolhida { background: color-mix(in srgb, var(--destaque) 28%, transparent); }
+.lista li .id { color: var(--suave); font-size: 11.5px; font-family: Consolas, monospace; }
+
+/* campos do ClickUp: cada linha e caixa + campo */
+.campos-cu { grid-template-columns: 190px minmax(0, 1fr); margin-top: 10px; }
+.campos-cu select { width: 100%; padding: 8px 10px; background: var(--superficie);
+  color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; font: inherit; }
+.campos-cu :disabled { opacity: .5; }

@@ -126,6 +126,14 @@ def normalizar_ticket(valor):
 
 
 def montar_nome(dados, numero):
+    # Nome livre: o usuario escreve a base inteira e a automacao so numera.
+    # Serve para o lote que nao segue o padrao de ticket - e continua
+    # numerando de dois digitos, porque e a numeracao que faz o "parou no
+    # bordo" e a vinculacao posicional funcionarem.
+    livre = str(dados.get("nome_livre") or "").strip()
+    if livre:
+        return "{} | {:02d}".format(livre, numero)
+
     zendesk = str(dados.get("zendesk") or "").strip()
     sufixo = " | #{}".format(zendesk) if zendesk and zendesk.upper() != "N" else ""
     prefixo = str(dados.get("prefixo_ticket") or PADRAO_PREFIXO).strip().upper()
