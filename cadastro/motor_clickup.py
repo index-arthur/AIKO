@@ -179,16 +179,18 @@ class ClickUp:
                 sorted(lista["statuses"], key=lambda s: s.get("orderindex", 0))]
 
     def cards(self):
-        """Todos os cards do board, com o S/N de cada um."""
+        """Todos os cards do board, com o S/N e o patrimonio de cada um."""
         cards, pagina = [], 0
         while True:
             r = self._req("GET", "/list/{}/task?page={}&include_closed=true"
                           "&subtasks=true".format(LISTA_ATIVOS, pagina))
             for t in r.get("tasks", []):
-                serie = next((c.get("value") for c in t.get("custom_fields", [])
-                              if c.get("id") == CAMPO_SERIE), None)
+                campos = {c.get("id"): c.get("value")
+                          for c in t.get("custom_fields", [])}
                 cards.append({"id": t["id"], "nome": (t.get("name") or "").strip(),
-                              "serie": (serie or "").strip(),
+                              "serie": (campos.get(CAMPO_SERIE) or "").strip(),
+                              "patrimonio":
+                                  str(campos.get(CAMPO_PATRIMONIO) or "").strip(),
                               "status": (t.get("status") or {}).get("status")})
             if r.get("last_page") or not r.get("tasks"):
                 return cards
@@ -295,10 +297,26 @@ def planejar(cards, itens, prefixo):
         problemas.append("S/N repetido na lista: {}".format(
             ", ".join(sorted(set(repetidos)))))
 
+    # patrimonio repetido na propria lista colada
+    vistos_pat, pat_repetidos = set(), []
+    for it in itens:
+        pat = _chave(it.get("patrimonio"))
+        if not pat:
+            continue
+        if pat in vistos_pat:
+            pat_repetidos.append(it["patrimonio"])
+        vistos_pat.add(pat)
+    if pat_repetidos:
+        problemas.append("Patrimonio repetido na lista: {}".format(
+            ", ".join(sorted(set(pat_repetidos)))))
+
     por_serie = {}
+    por_patrimonio = {}
     for c in cards:
         if c["serie"]:
             por_serie.setdefault(_chave(c["serie"]), []).append(c)
+        if c.get("patrimonio"):
+            por_patrimonio.setdefault(_chave(c["patrimonio"]), []).append(c)
 
     proximo = ultimo_numero(cards, prefixo)
     acoes = []
@@ -309,6 +327,26 @@ def planejar(cards, itens, prefixo):
                 it["serial"], len(achados),
                 ", ".join(c["nome"] for c in achados)))
             continue
+
+        # Patrimonio e numero de etiqueta: dois ativos com o mesmo numero
+        # e inventario quebrado, e ninguem descobre pelo board. O S/N ja
+        # era conferido; o patrimonio passava direto.
+        #
+        # Dono do patrimonio e o card que o S/N casou - atualizar o proprio
+        # card nao e conflito. Conflito e o numero estar em OUTRO card.
+        meu_card = achados[0]["id"] if achados else None
+        donos = [c for c in por_patrimonio.get(_chave(it.get("patrimonio")), [])
+                 if c["id"] != meu_card]
+        if it.get("patrimonio") and donos:
+            problemas.append(
+                "Patrimonio {} ja esta em {}: {} (S/N {})".format(
+                    it["patrimonio"],
+                    "outro card" if len(donos) == 1 else
+                    "{} cards".format(len(donos)),
+                    ", ".join(c["nome"] for c in donos[:3]),
+                    it["serial"]))
+            continue
+
         if achados:
             acoes.append(dict(acao="atualizar", nome=achados[0]["nome"],
                               card_id=achados[0]["id"], **it))
