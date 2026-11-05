@@ -213,8 +213,12 @@
     <div class="conteudo-aba" data-aba="devolucao">
       <fieldset class="cartao">
         <legend>Procurar bordo</legend>
-        <input id="busca-dev" placeholder="últimos caracteres do device, ticket ou nome do equipamento"
-               autocomplete="off">
+        <div class="linha">
+          <input id="busca-dev" placeholder="últimos caracteres do device, ticket ou nome do equipamento"
+                 autocomplete="off">
+          <button class="secundario" id="btn-recarregar" type="button"
+                  title="Reler a base do cliente">Recarregar</button>
+        </div>
         <div class="tabela-rolavel">
           <table class="tabela" id="tabela-dev">
             <thead><tr><th>DeviceID</th><th>Equipamento atual</th></tr></thead>

@@ -136,6 +136,43 @@ class Ponte:
         cofre.esquecer_login()
         return {"ok": True}
 
+    # ---------- cadastros do cliente ----------
+    @staticmethod
+    def _listar_bordos(cli):
+        """O que alimenta a busca da aba Devolucao."""
+        eqs = cli.equipamentos()
+        nomes = {e["id"]: (e.get("name") or "").strip() for e in eqs}
+        mdts = cli._get("Forms/MobileDataTerminal/GetAllMobileDataTerminal")
+
+        bordos = [{"device": (m.get("deviceID") or "").strip(),
+                   "equipamento": nomes.get(m.get("equipmentID"), "")}
+                  for m in mdts if (m.get("deviceID") or "").strip()]
+        # Equipamento SEM bordo entra na busca: e o que sobra depois de uma
+        # devolucao, e sem ele nao da para alcanca-lo para excluir.
+        ocupados = {m.get("equipmentID") for m in mdts if m.get("equipmentID")}
+        bordos += [{"device": "", "equipamento": nomes[e["id"]]}
+                   for e in eqs
+                   if e["id"] not in ocupados and nomes[e["id"]]]
+        bordos.sort(key=lambda b: (b["device"].lower(),
+                                   b["equipamento"].lower()))
+        return bordos
+
+    def recarregar(self):
+        """
+        Rele a base do cliente sem refazer o login.
+
+        A busca da Devolucao trabalhava sobre a foto tirada no Conectar:
+        equipamento criado DEPOIS nao aparecia ali, mesmo existindo no
+        TracKit. Chamado sozinho ao fim de cada lote, e no botao.
+        """
+        try:
+            if not self._sessao or not self._empresa:
+                return {"ok": False, "erro": "Conecte primeiro."}
+            cli = TrackitClient(self._empresa, self._sessao)
+            return {"ok": True, "bordos": self._listar_bordos(cli)}
+        except Exception as e:
+            return {"ok": False, "erro": str(e)}
+
     # ---------- conexao ----------
     def conectar(self, empresa, usuario, senha, lembrar=False):
         try:
@@ -155,23 +192,7 @@ class Ponte:
             cli = TrackitClient(empresa, sessao)
             self._sessao, self._empresa = sessao, empresa
 
-            eqs = cli.equipamentos()
-            nomes = {e["id"]: (e.get("name") or "").strip() for e in eqs}
-            mdts = cli._get(
-                "Forms/MobileDataTerminal/GetAllMobileDataTerminal")
-
-            bordos = [{"device": (m.get("deviceID") or "").strip(),
-                       "equipamento": nomes.get(m.get("equipmentID"), "")}
-                      for m in mdts if (m.get("deviceID") or "").strip()]
-            # Equipamento SEM bordo entra na busca: e o que sobra depois de
-            # uma devolucao, e sem ele nao da para alcanca-lo para excluir.
-            ocupados = {m.get("equipmentID") for m in mdts
-                        if m.get("equipmentID")}
-            bordos += [{"device": "", "equipamento": nomes[e["id"]]}
-                       for e in eqs
-                       if e["id"] not in ocupados and nomes[e["id"]]]
-            bordos.sort(key=lambda b: (b["device"].lower(),
-                                       b["equipamento"].lower()))
+            bordos = self._listar_bordos(cli)
 
             # So guarda DEPOIS de a credencial provar que funciona. Guardar
             # antes deixaria uma senha errada salva, e o proximo Conectar

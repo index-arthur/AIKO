@@ -54,6 +54,10 @@ window.appFim = (resumo) => {
   travarAcoes(false);
   $("#barra").style.width = "0";
   if (resumo && resumo.aviso) escreverLog(resumo.aviso, "aviso");
+  // O lote mudou a base: sem isso a busca da Devolucao continuaria
+  // mostrando a foto tirada no Conectar, e o que acabou de ser criado
+  // nao apareceria ali.
+  if (!estado.esboco) recarregarBordos(true);
 };
 window.appUpdate = (info) => {
   if (!info || !info.tem_update) return;
@@ -417,6 +421,20 @@ function camposMarcadosCU() {
 
 $("#busca-dev").addEventListener("input", buscarBordo);
 
+async function recarregarBordos(silencioso) {
+  const r = await chamar("recarregar");
+  if (!r || !r.ok) {
+    if (!silencioso) avisar((r && r.erro) || "Não consegui recarregar.");
+    return;
+  }
+  estado.bordos = r.bordos || [];
+  buscarBordo();
+  if (!silencioso)
+    escreverLog(`Base relida: ${estado.bordos.length} bordos.`, "info");
+}
+
+$("#btn-recarregar").onclick = () => recarregarBordos(false);
+
 function buscarBordo() {
   const termo = $("#busca-dev").value.trim().toLowerCase();
   const corpo = $("#tabela-dev tbody");
@@ -625,6 +643,8 @@ function esbocoResponder(metodo, args) {
                                  equipamento: "Pipa " + String(i + 1).padStart(2, "0") })),
       ] });
   }
+  if (metodo === "recarregar")
+    return Promise.resolve({ ok: true, bordos: estado.bordos });
   if (metodo === "tutorial")
     return Promise.resolve({ ok: true, texto: "A ajuda vem do Python — no modo esboço ela não está disponível." });
   if (metodo === "inicio") return Promise.resolve({ ok: true, versao: "8.0 (esboço)" });
