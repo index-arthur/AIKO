@@ -204,8 +204,8 @@ $("#btn-conectar").onclick = async () => {
 
   chip("indo", "conectando...");
   $("#btn-conectar").disabled = true;
-  const r = await chamar("conectar", empresa,
-                         $("#usuario").value.trim(), $("#senha").value);
+  const r = await chamar("conectar", empresa, $("#usuario").value.trim(),
+                         $("#senha").value, $("#lembrar-senha").checked);
   $("#btn-conectar").disabled = false;
 
   if (!r || !r.ok) {
@@ -214,6 +214,12 @@ $("#btn-conectar").onclick = async () => {
     return avisar((r && r.erro) || "Não conectou.");
   }
   chip("on", "conectado a " + empresa.toUpperCase());
+  if ($("#lembrar-senha").checked) {
+    // a senha fica no cofre do Windows; manter o texto na tela so daria
+    // mais uma chance de alguem ler por cima do ombro
+    $("#senha").value = "";
+    mostrarSenhaGuardada($("#usuario").value.trim());
+  }
   estado.listas = r.listas || { modelo: [], grupo: [], perfil: [] };
   estado.bordos = r.bordos || [];
   $$(".seletor").forEach((b) => {
@@ -231,6 +237,34 @@ function chip(estadoChip, texto) {
   const c = $("#chip-conexao");
   c.dataset.estado = estadoChip; c.textContent = texto;
 }
+
+
+/* ----------------------------------------------- senha guardada ------- */
+
+function mostrarSenhaGuardada(usuario) {
+  $("#dica-senha").textContent =
+    "Senha salva neste PC" + (usuario ? ` para ${usuario}` : "") +
+    " — deixe o campo em branco para usá-la.";
+  $("#btn-esquecer").hidden = false;
+  $("#lembrar-senha").checked = true;
+}
+
+async function carregarLoginGuardado() {
+  const r = await chamar("login_guardado");
+  if (!r || !r.tem) return;
+  if (r.usuario) {
+    $("#usuario").value = r.usuario.replace(/@aiko\.digital$/i, "");
+  }
+  mostrarSenhaGuardada(r.usuario);
+}
+
+$("#btn-esquecer").onclick = async () => {
+  await chamar("esquecer_login");
+  $("#dica-senha").textContent = "Senha esquecida neste PC.";
+  $("#btn-esquecer").hidden = true;
+  $("#lembrar-senha").checked = false;
+  $("#senha").value = "";
+};
 
 /* ------------------------------------------------- seletor em janela --- */
 
@@ -572,6 +606,8 @@ function esbocoResponder(metodo, args) {
                                  equipamento: "Pipa " + String(i + 1).padStart(2, "0") })),
       ] });
   }
+  if (metodo === "inicio") return Promise.resolve({ ok: true, versao: "8.0 (esboço)" });
+  if (metodo === "login_guardado") return Promise.resolve({ ok: true, tem: false });
   if (metodo === "clickup_conectar") {
     return Promise.resolve({ ok: true, usuario: "Arthur (esboço)",
       statuses: ["ESTOQUE", "EM USO", "MANUTENÇÃO"],
@@ -609,24 +645,41 @@ function esbocoResponder(metodo, args) {
 
 /* ------------------------------------------------------------ inicio -- */
 
-function iniciar() {
+let jaIniciou = false;
+
+async function iniciar(comPonte) {
+  if (jaIniciou) return;
+  jaIniciou = true;
+
   let tema = "escuro";
   try { tema = localStorage.getItem("tema") || "escuro"; } catch (e) { /* ignora */ }
   aplicarTema(tema);
   atualizarPrevia(); previaStarlink(); contarDev(); buscarBordo();
 
-  if (!temPonte()) {
+  if (!comPonte) {
     estado.esboco = true;
     chip("indo", "modo esboço");
     escreverLog("Modo esboço: sem Python por trás. Os dados são de mentira e " +
                 "nada é gravado — serve para avaliar a tela.", "aviso");
     escreverLog('Clique em "Conectar" para popular os seletores e a busca.', "info");
+    carregarLoginGuardado();
+    return;
   }
+
+  // Com ponte, quem puxa e a tela. O Python empurrando isso na abertura
+  // travava a janela: o evaluate_js chega antes de a pagina existir.
+  const info = await chamar("inicio");
+  if (info && info.versao) $("#versao").textContent = "v" + info.versao;
+  await carregarLoginGuardado();
+  chamar("checar_update");
 }
 
-if (temPonte()) iniciar();
-else {
-  window.addEventListener("pywebviewready", iniciar);
-  // sem pywebview o evento nunca vem; segue em modo esboco
-  setTimeout(() => { if (!document.documentElement.dataset.tema) iniciar(); }, 120);
+if (temPonte()) {
+  iniciar(true);
+} else {
+  window.addEventListener("pywebviewready", () => iniciar(true));
+  // Sem pywebview o evento nunca chega. A espera e generosa de proposito:
+  // empacotado a ponte demora bem mais que rodando do fonte, e cortar cedo
+  // fazia o app instalado abrir dizendo "modo esboço".
+  setTimeout(() => { if (!jaIniciou) iniciar(temPonte()); }, 4000);
 }

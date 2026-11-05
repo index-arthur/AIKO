@@ -7,8 +7,14 @@
     Duas escolhas do build que nao sao obvias e nao devem ser mexidas sem
     motivo:
 
-    --collect-data sv_ttk   o tema carrega arquivos .tcl em runtime e o
-                            PyInstaller nao os acha sozinho. Sem isso o app
+    --add-data <abs>;web    a interface e HTML/CSS/JS em disco. O caminho
+                            de origem precisa ser ABSOLUTO: o PyInstaller o
+                            resolve a partir do --specpath (_build), nao do
+                            diretorio atual. No onedir do
+                            PyInstaller 6 isso cai em _internal/, que e para
+                            onde o sys._MEIPASS aponta - montar o caminho a
+                            partir do sys.executable abriria a janela em
+                            branco. Sem isso o app
                             compilado abre e morre ao aplicar o tema.
 
     --collect-all selenium  o Selenium so e importado dentro da funcao de
@@ -43,20 +49,20 @@ Write-Host "Versao: $Versao" -ForegroundColor Cyan
 # A versao no codigo e a da release tem de bater: o updater compara a tag do
 # GitHub com a constante VERSION embutida. Divergiu, ou ninguem ve a
 # atualizacao ou o app pede update para sempre.
-$noCodigo = (Select-String -Path (Join-Path $raiz "main.py") `
+$noCodigo = (Select-String -Path (Join-Path $raiz "atualizador.py") `
              -Pattern '^VERSION = "([^"]+)"').Matches[0].Groups[1].Value
 if ($noCodigo -ne $Versao) {
-    throw "VERSION do arquivo ($Versao) != VERSION do main.py ($noCodigo). Alinhe os dois."
+    throw "VERSION do arquivo ($Versao) != VERSION do atualizador.py ($noCodigo). Alinhe os dois."
 }
 
 # O modo de teste do updater ligado faz o app anunciar uma versao 9.9 que nao
 # existe e pedir atualizacao para sempre. Ja foi distribuido assim uma vez -
 # o toggle estava ligado na copia de trabalho e entrou no build sem ninguem
 # perceber. Agora o build recusa.
-$modoTeste = (Select-String -Path (Join-Path $raiz "main.py") `
+$modoTeste = (Select-String -Path (Join-Path $raiz "atualizador.py") `
               -Pattern '^MODO_TESTE_UPDATE\s*=\s*(\w+)').Matches[0].Groups[1].Value
 if ($modoTeste -ne "False") {
-    throw "MODO_TESTE_UPDATE esta $modoTeste no main.py. Ponha False antes de gerar o instalador."
+    throw "MODO_TESTE_UPDATE esta $modoTeste no atualizador.py. Ponha False antes de gerar o instalador."
 }
 Write-Host "MODO_TESTE_UPDATE: False (ok)" -ForegroundColor DarkGray
 
@@ -66,15 +72,18 @@ $work = Join-Path $raiz "_build\work"
 Write-Host "`n[1/2] Empacotando com PyInstaller..." -ForegroundColor Cyan
 python -m PyInstaller --noconfirm --windowed `
     --name "CadastroBordo" `
-    --collect-data sv_ttk `
     --collect-all selenium `
+    --add-data "$(Join-Path $raiz 'web');web" `
     --hidden-import motor_api `
     --hidden-import motor_vinculo `
     --hidden-import motor_starlink `
+    --hidden-import motor_devolucao `
     --hidden-import motor_clickup `
     --hidden-import trackit_api_client `
+    --hidden-import atualizador `
+    --hidden-import cofre `
     --distpath $dist --workpath $work --specpath (Join-Path $raiz "_build") `
-    main.py
+    app_web.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller falhou" }
 
 $appDir = Join-Path $dist "CadastroBordo"

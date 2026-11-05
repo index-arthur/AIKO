@@ -56,6 +56,14 @@ UninstallDisplayIcon={app}\{#EXE}
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
+[InstallDelete]
+; Limpa a pasta de runtime antes de copiar. O Inno sobrescreve, mas nao
+; APAGA o que sumiu de uma versao para a outra - e na v8 o runtime inteiro
+; trocou (Tkinter/sv_ttk sairam, WebView2 entrou). Sem isso, quem atualiza
+; da v7 fica com os restos do Tk ocupando espaco na maquina para sempre.
+; Seguro porque tudo que fica aqui vem do proprio instalador.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "{#ORIGEM}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

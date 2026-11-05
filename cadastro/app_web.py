@@ -21,6 +21,7 @@ import sys
 import threading
 import traceback
 import webbrowser
+from datetime import datetime
 
 import webview
 
@@ -29,6 +30,7 @@ from motor_vinculo import executar_vinculacao
 from motor_starlink import executar_starlink
 from motor_devolucao import executar_devolucao
 from trackit_api_client import TrackitClient, obter_sessao
+import cofre
 from atualizador import (
     VERSION, RELEASES_URL, MODO_TESTE_UPDATE,
     checar_atualizacao, baixar_nova_versao, aplicar_atualizacao,
@@ -37,10 +39,39 @@ import motor_clickup as mcu
 
 
 def _pasta():
-    """Funciona tanto rodando do fonte quanto dentro do PyInstaller."""
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "web")
+    """
+    Onde esta a interface, rodando do fonte ou empacotada.
+
+    Empacotado NAO e a pasta do .exe: desde o PyInstaller 6 o --add-data do
+    modo onedir cai em _internal/, e e para la que o sys._MEIPASS aponta.
+    Montar o caminho a partir do sys.executable acharia uma pasta web que
+    nao existe, e o app abriria em branco.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return os.path.join(base, "web")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+
+
+def _diagnostico(msg):
+    """
+    Rastro em arquivo, so com CADASTRO_DEBUG ligado.
+
+    Empacotado com --windowed nao ha console: se a ponte entre a tela e o
+    Python nao subir, o app simplesmente diz "modo esboco" e nao ha onde
+    olhar. Numa maquina de outra pessoa isso e um beco sem saida - daqui
+    sai a resposta.
+    """
+    if not os.environ.get("CADASTRO_DEBUG"):
+        return
+    try:
+        os.makedirs(cofre.PASTA, exist_ok=True)
+        with open(os.path.join(cofre.PASTA, "diagnostico.log"), "a",
+                  encoding="utf-8") as f:
+            f.write("{} {}\n".format(datetime.now().isoformat(" ", "seconds"),
+                                     msg))
+    except Exception:
+        pass
 
 
 class Ponte:
@@ -53,15 +84,20 @@ class Ponte:
     """
 
     def __init__(self):
-        self.janela = None
-        self.sessao = None
-        self.empresa = None
+        # Underscore NAO e estilo: o pywebview varre os atributos publicos
+        # deste objeto para expor ao JavaScript, e entrava janela adentro
+        # tocando propriedades COM do WebView2 fora da thread de UI. Isso
+        # travava a janela ("nao esta respondendo") e atrasava a publicacao
+        # da ponte, fazendo a tela achar que nao havia Python por tras.
+        self._janela = None
+        self._sessao = None
+        self._empresa = None
 
     # ---------- canal de volta (Python -> JS) ----------
     def _js(self, codigo):
         try:
-            if self.janela:
-                self.janela.evaluate_js(codigo)
+            if self._janela:
+                self._janela.evaluate_js(codigo)
         except Exception:
             pass        # janela fechando no meio do lote nao e erro
 
@@ -72,17 +108,51 @@ class Ponte:
     def progresso(self, feito, total):
         self._js("window.appProgresso({}, {})".format(int(feito), int(total)))
 
+    # ---------- abertura ----------
+    def inicio(self):
+        """
+        Primeira coisa que a tela pergunta, ja carregada.
+
+        A versao e o aviso de atualizacao vinham empurrados pelo Python no
+        callback de abertura, e isso TRAVAVA a janela: o evaluate_js chega
+        antes de a pagina existir, o WebView2 marshala para a thread de UI
+        e ela fica esperando uma resposta que nunca vem. Quem puxa agora e
+        o JS, que so pergunta depois de estar pronto.
+        """
+        _diagnostico("inicio(): a tela alcancou a ponte")
+        return {"ok": True, "versao": VERSION}
+
+    # ---------- login guardado ----------
+    def login_guardado(self):
+        """O que a tela mostra ao abrir. Nunca devolve a senha para o JS."""
+        par = cofre.ler_login()
+        if not par:
+            return {"ok": True, "tem": False}
+        usuario, _senha = par
+        return {"ok": True, "tem": True, "usuario": usuario}
+
+    def esquecer_login(self):
+        cofre.esquecer_login()
+        return {"ok": True}
+
     # ---------- conexao ----------
-    def conectar(self, empresa, usuario, senha):
+    def conectar(self, empresa, usuario, senha, lembrar=False):
         try:
             empresa = (empresa or "").strip().lower()
             if usuario and not usuario.endswith("@aiko.digital"):
                 usuario = usuario + "@aiko.digital"
 
+            # Senha em branco com login guardado = usar o guardado. E o que
+            # faz o campo poder ficar vazio depois de marcar "usar sempre".
+            if not senha:
+                par = cofre.ler_login()
+                if par and (not usuario or par[0] == usuario):
+                    usuario, senha = par
+
             sessao = obter_sessao(empresa, usuario=usuario or None,
                                   senha=senha or None, log=self.log)
             cli = TrackitClient(empresa, sessao)
-            self.sessao, self.empresa = sessao, empresa
+            self._sessao, self._empresa = sessao, empresa
 
             eqs = cli.equipamentos()
             nomes = {e["id"]: (e.get("name") or "").strip() for e in eqs}
@@ -101,6 +171,16 @@ class Ponte:
                        if e["id"] not in ocupados and nomes[e["id"]]]
             bordos.sort(key=lambda b: (b["device"].lower(),
                                        b["equipamento"].lower()))
+
+            # So guarda DEPOIS de a credencial provar que funciona. Guardar
+            # antes deixaria uma senha errada salva, e o proximo Conectar
+            # falharia sozinho sem ninguem entender por que.
+            if lembrar and senha:
+                cofre.salvar_login(usuario or "", senha)
+                self.log("Senha guardada neste PC (cifrada pelo Windows).",
+                         "info")
+            elif not lembrar:
+                cofre.esquecer_login()
 
             def enxuto(itens):
                 return [{"id": x.get("id"), "name": (x.get("name") or "").strip()}
@@ -309,14 +389,11 @@ def main():
         js_api=ponte, width=1180, height=780,
         min_size=(760, 520), background_color="#1c1c1c",
     )
-    ponte.janela = janela
-
-    def ao_abrir():
-        ponte._js("document.getElementById('versao').textContent = 'v{}'"
-                  .format(VERSION))
-        ponte.checar_update()
-
-    webview.start(ao_abrir, debug=bool(os.environ.get("CADASTRO_DEBUG")))
+    ponte._janela = janela
+    # Sem callback de abertura de proposito: qualquer evaluate_js disparado
+    # antes de a pagina carregar trava a janela. A tela chama api.inicio()
+    # quando estiver pronta.
+    webview.start(debug=bool(os.environ.get("CADASTRO_DEBUG")))
 
 
 if __name__ == "__main__":

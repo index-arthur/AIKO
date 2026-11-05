@@ -45,9 +45,18 @@
         </div>
 
         <label for="senha">Senha</label>
-        <div class="linha">
-          <input id="senha" type="password" autocomplete="current-password">
-          <button class="secundario" id="btn-olho" type="button">ver</button>
+        <div>
+          <div class="linha">
+            <input id="senha" type="password" autocomplete="current-password">
+            <button class="secundario" id="btn-olho" type="button">ver</button>
+          </div>
+          <div class="linha" style="margin-top:7px">
+            <label class="caixa"><input type="checkbox" id="lembrar-senha">
+              Usar sempre neste PC</label>
+            <button class="link discreto" id="btn-esquecer" type="button" hidden>
+              Esquecer senha salva</button>
+          </div>
+          <p class="dica" id="dica-senha"></p>
         </div>
 
         <span></span>

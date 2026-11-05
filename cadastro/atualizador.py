@@ -16,7 +16,7 @@ import sys
 import tempfile
 import urllib.request
 
-VERSION = "7.4"
+VERSION = "8.0"
 REPO_OWNER = "index-arthur"
 REPO_NAME = "AIKO"
 GITHUB_API_LATEST = (
