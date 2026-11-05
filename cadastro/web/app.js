@@ -23,6 +23,7 @@ const estado = {
   bordos: [],
   linhaDev: null,        // linha escolhida na tabela de busca
   camposCU: [],
+  prefsCU: {},
   rodando: false,
   esboco: false,
 };
@@ -355,7 +356,22 @@ $("#sl-seriais").addEventListener("input", previaStarlink);
 
 $("#sl-clickup").onchange = (e) => {
   $("#cartao-clickup").hidden = !e.target.checked;
+  salvarPrefsCU();
 };
+$("#sl-trackit").onchange = salvarPrefsCU;
+
+function salvarPrefsCU() {
+  if (estado.esboco) return;
+  const campos = {};
+  $$("#campos-cu [data-campo]").forEach((w) => {
+    campos[w.dataset.campo] = { marcado: !w.disabled, valor: w.value };
+  });
+  chamar("clickup_salvar_prefs", {
+    clickup: $("#sl-clickup").checked,
+    trackit: $("#sl-trackit").checked,
+    campos,
+  });
+}
 
 $("#btn-cu-conectar").onclick = async () => {
   $("#dica-cu").textContent = "conectando...";
@@ -377,14 +393,26 @@ function desenharCamposCU(statuses) {
   const alvo = $("#campos-cu");
   alvo.innerHTML = "";
 
-  linhaCU(alvo, "status_card", "Status do card",
-          selectDe(statuses.map((s) => ({ id: s, name: s }))), true);
+  const lembrados = (estado.prefsCU || {}).campos || {};
+  const lembrado = (id, padraoMarcado) => {
+    const d = lembrados[id];
+    return { marcado: d ? !!d.marcado : padraoMarcado,
+             valor: d ? (d.valor || "") : null };
+  };
+
+  const st = lembrado("status_card", true);
+  const wst = selectDe(statuses.map((s) => ({ id: s, name: s })));
+  if (st.valor) wst.value = st.valor;
+  linhaCU(alvo, "status_card", "Status do card", wst, st.marcado);
 
   estado.camposCU.forEach((c) => {
+    const d = lembrado(c.id, false);
     const w = (c.tipo === "lista" || c.tipo === "etiqueta")
       ? selectDe(c.opcoes || [])
       : Object.assign(document.createElement("input"), { value: c.padrao || "" });
-    linhaCU(alvo, c.id, c.rotulo, w, false);
+    // valor nulo = nunca foi guardado; ai vale o padrao do proprio campo
+    if (d.valor !== null && d.valor !== "") w.value = d.valor;
+    linhaCU(alvo, c.id, c.rotulo, w, d.marcado);
   });
 }
 
@@ -403,7 +431,8 @@ function linhaCU(alvo, id, rotulo, widget, marcado) {
   lbl.append(cx, document.createTextNode(" " + rotulo));
   widget.disabled = !marcado;
   widget.dataset.campo = id;
-  cx.onchange = () => { widget.disabled = !cx.checked; };
+  cx.onchange = () => { widget.disabled = !cx.checked; salvarPrefsCU(); };
+  widget.onchange = salvarPrefsCU;
   cx.dataset.para = id;
   alvo.append(lbl, widget);
 }
@@ -415,6 +444,20 @@ function camposMarcadosCU() {
                    valor: w.value,
                    texto: w.tagName === "SELECT"
                           ? (w.selectedOptions[0] || {}).text || "" : w.value }));
+}
+
+async function restaurarPrefsCU() {
+  const p = await chamar("clickup_prefs");
+  if (!p || !p.ok) return;
+  estado.prefsCU = p;
+  $("#sl-trackit").checked = p.trackit !== false;
+  if (!p.clickup) return;
+
+  $("#sl-clickup").checked = true;
+  $("#cartao-clickup").hidden = false;
+  // Conecta sozinho so quando ja ha token guardado: sem ele a chamada
+  // falharia e a tela abriria com um erro que a pessoa nao pediu.
+  if (p.tem_token) $("#btn-cu-conectar").click();
 }
 
 /* --------------------------------------------------------- devolucao -- */
@@ -643,6 +686,10 @@ function esbocoResponder(metodo, args) {
                                  equipamento: "Pipa " + String(i + 1).padStart(2, "0") })),
       ] });
   }
+  if (metodo === "clickup_prefs")
+    return Promise.resolve({ ok: true, clickup: false, trackit: true,
+                             campos: {}, tem_token: false });
+  if (metodo === "clickup_salvar_prefs") return Promise.resolve({ ok: true });
   if (metodo === "recarregar")
     return Promise.resolve({ ok: true, bordos: estado.bordos });
   if (metodo === "tutorial")
@@ -710,6 +757,7 @@ async function iniciar(comPonte) {
   // Com ponte, quem puxa e a tela. O Python empurrando isso na abertura
   // travava a janela: o evaluate_js chega antes de a pagina existir.
   const info = await chamar("inicio");
+  await restaurarPrefsCU();
   if (info && info.versao) $("#versao").textContent = "v" + info.versao;
   await carregarLoginGuardado();
   chamar("checar_update");

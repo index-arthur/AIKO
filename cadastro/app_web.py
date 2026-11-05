@@ -243,6 +243,51 @@ class Ponte:
         except Exception as e:
             return {"ok": False, "erro": str(e)}
 
+    def clickup_prefs(self):
+        """
+        O que ficou marcado e preenchido da ultima vez.
+
+        Mesmo arquivo e mesmo formato da HUD em Tk ({id: {marcado, valor}}),
+        para as duas versoes lerem o trabalho uma da outra enquanto convivem.
+        """
+        u = mcu.ler_ultimos()
+        campos = {}
+        for c in mcu.CAMPOS:
+            d = u.get(c["id"])
+            if not isinstance(d, dict):
+                continue
+            # Data de vinculacao nasce sempre hoje: e o dia em que o kit
+            # sai, nao o do lote passado.
+            valor = "" if c.get("hoje") else (d.get("valor") or "")
+            campos[c["id"]] = {"marcado": bool(d.get("marcado")),
+                               "valor": valor}
+
+        st = u.get("_status_card")
+        if isinstance(st, dict):
+            campos["status_card"] = {"marcado": bool(st.get("marcado")),
+                                     "valor": st.get("valor") or ""}
+
+        return {"ok": True,
+                "clickup": bool(u.get("_clickup_ligado")),
+                "trackit": u.get("_trackit_ligado", True),
+                "campos": campos,
+                "tem_token": bool(mcu.ler_token())}
+
+    def clickup_salvar_prefs(self, prefs):
+        try:
+            prefs = prefs or {}
+            u = mcu.ler_ultimos()
+            for cid, d in (prefs.get("campos") or {}).items():
+                chave = "_status_card" if cid == "status_card" else cid
+                u[chave] = {"marcado": bool(d.get("marcado")),
+                            "valor": d.get("valor") or ""}
+            u["_clickup_ligado"] = bool(prefs.get("clickup"))
+            u["_trackit_ligado"] = bool(prefs.get("trackit"))
+            mcu.salvar_ultimos(u)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "erro": str(e)}
+
     def clickup_token(self, token):
         try:
             mcu.salvar_token(token)
